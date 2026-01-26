@@ -1,0 +1,12 @@
+[package]
+name = "justcxx"
+version = "0.2.0"
+edition = "2024"
+
+
+[dependencies]
+cxx = "1.0.192"
+justcxx-macro = { version = "0.2.0", path = "macro" }
+
+[workspace]
+members = ["build","macro","example"]

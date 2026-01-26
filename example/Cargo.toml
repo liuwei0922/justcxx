@@ -1,0 +1,16 @@
+[package]
+name = "example"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+cxx = "1.0.194"
+justcxx = { version = "0.2.0", path = ".." }
+
+[build-dependencies]
+justcxx-build = { version = "0.2.0", path = "../build" }
+
+
+
+
+

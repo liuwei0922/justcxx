@@ -1,0 +1,11 @@
+[package]
+name = "justcxx-build"
+version = "0.2.0"
+edition = "2024"
+
+[dependencies]
+cc = "1.2.52"
+cxx-build = "1.0.192"
+proc-macro2 = "1.0.105"
+quote = "1.0.43"
+syn = { version = "2.0.114", features = ["extra-traits", "full"] }

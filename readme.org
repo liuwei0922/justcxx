@@ -1,0 +1,197 @@
+#+TITLE: JustCxx: Declarative Rust-C++ FFI Binding Generator
+#+AUTHOR: lyuweii
+
+* Introduction
+JustCxx is a high-level interoperability tool built on top of the
+=cxx= crate. It automates the generation of FFI binding code between
+Rust and C++ through a declarative Rust macro (DSL).
+
+Unlike raw =cxx=, JustCxx v0.2 introduces a *Unified Generic Wrapper*
+architecture. It maps C++ objects to a single Rust generic struct
+=CppObject<T, Mode, Storage>=, providing:
+1.  *Zero-cost abstractions*: C++ pointers are mapped to Rust wrappers
+   that support Copy (when referenced), enabling flexible chaining.
+2.  *Automatic Type Inference*: Fields like =Vec=, =Map=, and =Option=
+   are automatically detected and wrapped without explicit attributes.
+3.  *Safe Mutability*: Strictly distinguishes between =Const= and
+   =Mut= access via Rust traits and PhantomData.
+
+* Quick Start
+
+** 1. Dependencies
+Add the following to your =Cargo.toml=. Note that =cxx= is required as
+a peer dependency.
+
+#+begin_src toml
+[dependencies]
+cxx = "1.0"
+justcxx = { version = "0.2" }
+
+[build-dependencies]
+justcxx-build = { version = "0.2" }
+#+end_src
+
+** 2. Build Script (build.rs)
+#+begin_src rust
+fn main() {
+    // Generates C++ headers and Rust bindings
+    justcxx_build::bridge("src/lib.rs")
+        .file("src/cpp/my_class.cc")
+        .compile("my-cxx-lib");
+    println!("cargo:rerun-if-changed=src/lib.rs");
+}
+#+end_src
+
+** 3. Writing DSL (src/lib.rs)
+#+begin_src rust
+use justcxx::bind;
+
+bind! {
+    include!("my_cpp_header.hh");
+
+    // 1. Define a C++ class mapping
+    struct Config {
+        id: i32,
+        value: f32,
+        name: String,
+    }
+
+    // 2. Define methods
+    impl Config {
+        // Constructor (return Self)
+        fn new() -> Self;
+        
+        // Getters & Setters
+        fn get_id(&self) -> i32;
+        fn change_id(&mut self, v: i32);
+    }
+
+    // 3. Container & Composition
+    struct Manager {
+        config: Config,          // Object field
+        data: Vec<Config>,       // Vector container
+        mapping: Map<i32, String> // Map container
+    }
+}
+#+end_src
+
+* DSL Syntax Guide
+
+** Struct Definitions
+JustCxx parses struct fields to determine the FFI strategy. Attributes
+like =#[obj]= or =#[map]= are *no longer needed* in v0.2.
+
+#+begin_src rust
+struct Example {
+    basic: i32,                 // Basic type (Copy)
+    obj: Config,                // C++ Object (Ref/Mut)
+    opt: Option<i32>,           // Nullable Value (Result<T>)
+    opt_obj: Option<Config>,    // Nullable Object (Ptr check)
+    
+    // Containers
+    list: Vec<Config>,          // std::vector<Config>
+    dict: Map<String, Config>,  // std::unordered_map<std::string, Config>
+    
+    #[readonly]                 // Prevent generating setter
+    read_only_field: i32,
+}
+#+end_src
+
+** Method Definitions
+
+*** Constructors
+Constructors are identified by the return type =-> Self=. They must be
+static methods.
+#+begin_src rust
+impl Config {
+    fn new() -> Self; 
+    // Maps to C++: make_Config_new() (Factory function)
+}
+#+end_src
+
+*** Instance Methods
+We use standard Rust receiver syntax to enforce C++ const-correctness.
+
+| Rust Signature | C++ Mapping | Wrapper Semantics |
+|----------------|-------------|-------------------|
+| =fn foo(&self)= | =void foo(const T&)= | Safe to call on any object. |
+| =fn bar(&mut self)= | =void bar(T&)= | Requires =Mut= permission. |
+
+*** Static Methods
+Functions defined in =impl= block without =self=.
+#+begin_src rust
+impl Utils {
+    fn add(a: i32, b: i32) -> i32;
+}
+#+end_src
+
+*** Custom C++ Name
+You can map a Rust method to a different C++ method name using ====.
+#+begin_src rust
+fn rust_name(&self) = "cpp_name";
+#+end_src
+
+** Iterators
+JustCxx v0.2 supports flexible iterator generation.
+
+*** Reference Iterator (Zero-Copy)
+This is the default for containers like =Vec= and =Map=. It generates
+=iter()= (Const) and =iter_mut()= (Mut).
+- =iter()= returns =Const= items (cannot call setters).
+- =iter_mut()= returns =Mut= items (can call setters).
+
+*** Custom / Consuming Iterator
+Use =#[iter]= attribute to define custom iterators (e.g., for streams
+or buffers).
+
+#+begin_src rust
+impl Container {
+    // Generate a method named 'drain'
+    // 'Item = Config' implies Owned (Value) semantics
+    #[iter(Item = Config)]
+    fn drain(&mut self);
+}
+#+end_src
+
+* Container Support
+
+** Vec<T>
+Maps to =std::vector<T>= or =std::vector<std::unique_ptr<T>>=.
+Generated methods on the wrapper:
+- =len(&self) -> usize=
+- =get(&self, index: usize) -> Wrapper<T>=
+- =iter(&self)= / =iter_mut(&mut self)=
+
+** Map<K, V>
+Maps to =std::unordered_map<K, V>= (or =std::map=).
+Generated methods:
+- =len(&self) -> usize=
+- =get(&self, key: K) -> Option<Wrapper<V>>=
+- =iter(&self)=
+
+* Architecture & Constraints
+
+** The "CppObject" Wrapper
+All C++ objects are wrapped in a generic struct:
+
+=pub type ConfigOwned = CppObject<'static, Config, Mut, Owned>;=
+
+- =Ref= storage: Zero-cost, =Copy=, acts like a smart pointer.
+- =Owned= storage: Holds =UniquePtr=, manages lifetime.
+- =Mut/Const=: Phantom generic types enforcing Rust borrowing rules.
+
+Because it's designed for C++ FFI, owned types are made mutable by
+default.
+** Implicit "Dereference" for Vector/Map
+When accessing =Vec<UniquePtr<T>>= via =get(i)=, JustCxx automatically
+dereferences the smart pointer, returning a reference wrapper to
+=T=. This unifies the API between =Vec<T>= and =Vec<UniquePtr<T>>=.
+
+** Limitations
+1. *Map Keys*: Must be basic types or Strings. Object keys are not
+   fully supported in FFI due to complexity.
+2. *String*: =std::string= is always copied to Rust =String= when
+   returned by value. Accessing via reference (e.g., in Map) works but
+   requires careful lifetime management.
+3. *Dependencies*: Your crate must rely on =cxx= crate directly, as
+   procedural macros generate code referencing it.
