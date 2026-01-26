@@ -91,7 +91,7 @@ pub fn generate_map_ffi(
         let value_type = if &def.value_type == "String" {
             quote! {String }
         } else if models.contains_key(&def.value_type) {
-            quote! { Pin<&mut #value_ty_ident> }
+            quote! { Pin<&'a mut #value_ty_ident> }
         } else {
             quote! { #value_ty_ident }
         };
@@ -113,7 +113,7 @@ pub fn generate_map_ffi(
             fn #len_fn(obj: &#ffi_type_name) -> usize;
 
             #[rust_name = #get_fn]
-            fn #get_fn(obj: Pin<&mut #ffi_type_name>, key: #key_type) -> Result<#value_type>;
+            fn #get_fn<'a>(obj: Pin<&'a mut #ffi_type_name>, key: #key_type) -> Result<#value_type>;
         });
 
         let iter_new_fn = format_ident!("{}_iter_new", ffi_type_name);
@@ -136,7 +136,6 @@ pub fn generate_map_ffi(
         };
 
         items.push(quote! {
-            // 声明 Context 类型
             type #iter_ctx_name;
 
             #[rust_name = #iter_new_fn]

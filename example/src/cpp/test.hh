@@ -126,6 +126,7 @@ struct Wallet{
 struct MapExample{
     std::unordered_map<int, std::string> int_str_map;
     std::unordered_map<int, Config> int_config_map;
+    std::unordered_map<std::string, Config> str_config_map;
     MapExample(){
         int_config_map[10] = Config();
         int_config_map[10].id = 10;
@@ -134,5 +135,8 @@ struct MapExample{
 
         int_str_map[1] = "one";
         int_str_map[2] = "two";
+
+        str_config_map["one"] = Config();
+        str_config_map["one"].id = 30;
     }
 };

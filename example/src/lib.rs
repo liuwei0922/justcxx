@@ -87,6 +87,7 @@ bind! {
     struct MapExample{
         int_str_map: Map<i32, String>,
         int_config_map: Map<i32, Config>,
+        str_config_map: Map<String, Config>
     }
 
     impl MapExample{

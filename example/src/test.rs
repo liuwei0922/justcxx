@@ -243,4 +243,12 @@ mod tests {
         assert_eq!(int_config_map.get(1), None);
         assert_eq!(int_config_map.get(10).unwrap().id(), 10);
     }
+
+    #[test]
+    fn test_map_key_string_val_obj(){
+        let map_example = MapExample::new();
+        let str_config_map = map_example.str_config_map();
+        assert_eq!(str_config_map.len(),1);
+        assert_eq!(str_config_map.get("one").unwrap().id(), 30);
+    }
 }
