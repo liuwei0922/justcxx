@@ -195,10 +195,26 @@ fn generate_ffi_field(
                 quote! { #get #set}
             }
         }
-        FieldKind::Obj => quote! {
-            #[rust_name = #rust_ffi_get_name]
-            fn #cxx_ffi_get_name(obj: Pin<&mut #class_name>) -> Pin<&mut #ty>;
-        },
+        FieldKind::Obj => {
+            if field.is_readonly {
+                quote! {
+                    #[rust_name = #rust_ffi_get_name]
+                    fn #cxx_ffi_get_name(obj: &#class_name) -> &#ty;
+                }
+            } else {
+                let get = quote! {
+                    #[rust_name = #rust_ffi_get_name]
+                    fn #cxx_ffi_get_name(obj: Pin<&mut #class_name>) -> Pin<&mut #ty>;
+                };
+
+                let set = quote! {
+                    #[rust_name = #rust_ffi_set_name]
+                    fn #cxx_ffi_set_name(obj: Pin<&mut #class_name>, val: UniquePtr<#ty>);
+                };
+
+                quote! { #get #set }
+            }
+        }
         FieldKind::OptObj { ty } => quote! {
             #[rust_name = #rust_ffi_get_name]
             fn #cxx_ffi_get_name(obj: Pin<&mut #class_name>) -> Result<Pin<&mut #ty>>;
@@ -339,7 +355,7 @@ fn convert_args_sig(args: &[Arg], models: &HashMap<String, ClassModel>) -> Vec<T
             // owned
             if let Some(name) = get_type_ident_name(t) {
                 if models.contains_key(&name) {
-                    let elem = format_ident!("{}", name);                    
+                    let elem = format_ident!("{}", name);
                     return quote! { #n: UniquePtr<#elem> };
                 }
             }

@@ -32,6 +32,7 @@ bind! {
     struct Methods{
         #[readonly]
         id: i32,
+        #[readonly]
         config: Config,
     }
 

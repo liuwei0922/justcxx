@@ -82,8 +82,13 @@ fn generate_field_shim(class_name: &str, field: &FieldDef, lines: &mut Vec<Strin
                 lines.push(format!("DEFINE_VAL_SET({}, {})", class_name, field.name));
             }
         }
-        FieldKind::Obj => {
-            lines.push(format!("DEFINE_OBJ({}, {})", class_name, field.name));
+        FieldKind::Obj => {            
+            if field.is_readonly{
+                lines.push(format!("DEFINE_OBJ_CONST({}, {})", class_name, field.name));
+            }else{
+                lines.push(format!("DEFINE_OBJ({}, {})", class_name, field.name));
+                lines.push(format!("DEFINE_OBJ_SET({}, {})", class_name, field.name));
+            }
         }
         FieldKind::OptObj { ty: _ } => {
             lines.push(format!("DEFINE_OPT_OBJ({}, {})", class_name, field.name));

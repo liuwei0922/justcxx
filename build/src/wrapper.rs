@@ -599,26 +599,16 @@ fn generate_wrapper_field(
                 });
             }
         }
-        FieldKind::Obj => {
-            let ty = &field.ty;
-
-            common_methods.push(quote! {
-                pub fn #field_name(&self) -> CppObject<'a, #ty, M, justcxx::Ref> {
-                    unsafe {
-                        #prepare_ptr
-                        let pin_self = std::pin::Pin::new_unchecked(&mut *ptr);
-
-                        let ret_pin = ffi::#ffi_get_name(pin_self);
-                        let ret_ptr = ret_pin.get_unchecked_mut() as *mut _;
-
-                        CppObject {
-                            inner: ret_ptr,
-                            _marker: std::marker::PhantomData
-                        }
-                    }
-                }
-            });
-        }
+        FieldKind::Obj => generate_obj_field_methods(
+            field_name,
+            &field.ty,
+            field.is_readonly,
+            &prepare_ptr,
+            &ffi_get_name,
+            &ffi_set_name,
+            &mut common_methods,
+            &mut mut_methods,
+        ),
         FieldKind::OptVal { ty } => {
             common_methods.push(quote! {
                 pub fn #field_name(&self) -> Option<#ty> {
@@ -716,6 +706,63 @@ fn generate_wrapper_field(
     }
 
     (common_methods, mut_methods, None)
+}
+
+// gen_rust.rs
+
+fn generate_obj_field_methods(
+    field_name: &Ident,
+    ty: &Type,
+    is_readonly: bool,
+    prepare_ptr: &TokenStream,
+    ffi_get_name: &Ident,
+    ffi_set_name: &Ident,
+    common_methods: &mut Vec<TokenStream>,
+    mut_methods: &mut Vec<TokenStream>,
+) {    
+    if is_readonly {
+        common_methods.push(quote! {
+            pub fn #field_name(&self) -> CppObject<'a, #ty, justcxx::Const, justcxx::Ref> {
+                unsafe {
+                    #prepare_ptr
+                    let ret_ref = ffi::#ffi_get_name(&*ptr);
+                    let ret_ptr = (ret_ref as *const _) as *mut _;
+
+                    CppObject {
+                        inner: ret_ptr,
+                        _marker: std::marker::PhantomData
+                    }
+                }
+            }
+        });
+    } else {
+        common_methods.push(quote! {
+            pub fn #field_name(&self) -> CppObject<'a, #ty, M, justcxx::Ref> {
+                unsafe {
+                    #prepare_ptr
+                    let pin_self = std::pin::Pin::new_unchecked(&mut *ptr);
+                    let ret_pin = ffi::#ffi_get_name(pin_self);
+                    let ret_ptr = ret_pin.get_unchecked_mut() as *mut _;
+
+                    CppObject {
+                        inner: ret_ptr,
+                        _marker: std::marker::PhantomData
+                    }
+                }
+            }
+        });
+
+        let set_name = format_ident!("set_{}", field_name);
+        mut_methods.push(quote! {
+            pub fn #set_name(&mut self, val: CppObject<'static, #ty, justcxx::Mut, justcxx::Owned>) {
+                unsafe {
+                    #prepare_ptr
+                    let pin_self = std::pin::Pin::new_unchecked(&mut *ptr);
+                    ffi::#ffi_set_name(pin_self, val.inner)
+                }
+            }
+        });
+    }
 }
 
 type MethodGenResult = (

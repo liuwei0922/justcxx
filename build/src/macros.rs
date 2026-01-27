@@ -217,6 +217,24 @@ namespace bridge_detail {
     inline T &&arg_convert(T &&arg) {
         return std::forward<T>(arg);
     }
+
+    template <typename L, typename R>
+    inline typename std::enable_if_t<is_unique_ptr<L>::value>
+    assign_smart(L& lhs, R&& rhs) {
+        lhs = std::forward<R>(rhs);
+    }
+
+    template <typename L, typename R>
+    inline typename std::enable_if_t<!is_unique_ptr<L>::value && is_unique_ptr<std::decay_t<R>>::value>
+    assign_smart(L& lhs, R&& rhs) {
+        lhs = std::move(*rhs);
+    }
+    
+    template <typename L, typename R>
+    inline typename std::enable_if_t<!is_unique_ptr<L>::value && !is_unique_ptr<std::decay_t<R>>::value>
+    assign_smart(L& lhs, R&& rhs) {
+        lhs = arg_convert(std::forward<R>(rhs));
+    }
 } // namespace bridge_detail
 
 #define DEFINE_VAL(CLASS, FIELD)                                               \
@@ -235,6 +253,12 @@ namespace bridge_detail {
     inline auto CLASS##_get_##FIELD(const CLASS &obj)                          \
         -> decltype(::bridge_detail::return_convert(obj.FIELD)) {              \
         return ::bridge_detail::return_convert(obj.FIELD);                     \
+    }
+
+#define DEFINE_OBJ_SET(CLASS, FIELD)                                           \
+    template <typename Arg>                                                    \
+    inline void CLASS##_set_##FIELD(CLASS &obj, Arg val) {                     \
+        ::bridge_detail::assign_smart(obj.FIELD, std::move(val));              \
     }
 
 #define DEFINE_VAL_SET(CLASS, FIELD)                                           \
