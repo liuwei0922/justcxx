@@ -69,5 +69,10 @@ where
 
 impl<T, C: CppClass> AsMutCppPtr<C> for &mut T where T: AsMutCppPtr<C> + ?Sized {}
 
+
+pub type CppOwned<T> = <T as CppTypeAliases>::Owned;
+pub type CppRef<'a, T> = <T as CppTypeAliases>::Ref<'a>;
+pub type CppMut<'a, T> = <T as CppTypeAliases>::Mut<'a>;
+
 pub use cxx;
 pub use justcxx_macro::bind;
