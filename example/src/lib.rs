@@ -93,6 +93,10 @@ bind! {
     impl MapExample{
         fn new() -> Self;
     }
+
+    struct Ctor{
+        id:i32,
+    }
   
 }
 

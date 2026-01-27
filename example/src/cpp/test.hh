@@ -4,7 +4,6 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
-#include "rust/cxx.h"
 
 struct Config {
     int id;
@@ -139,4 +138,8 @@ struct MapExample{
         str_config_map["one"] = Config();
         str_config_map["one"].id = 30;
     }
+};
+
+struct Ctor{
+    int id;
 };
