@@ -128,7 +128,7 @@ pub fn generate_rust(bind_context: &BindContext) -> TokenStream {
 
 fn generate_wrapper_block(class: &ClassModel, models: &HashMap<String, ClassModel>) -> TokenStream {
     let class_name = &class.name;
-    let owned_name = format_ident!("{}Owned", class_name);
+    let _owned_name = format_ident!("{}Owned", class_name);
 
     let tag_def = quote! {
         #[derive(Clone, Copy)]
@@ -139,7 +139,11 @@ fn generate_wrapper_block(class: &ClassModel, models: &HashMap<String, ClassMode
         }
     };
     let type_aliases = quote! {
-        pub type #owned_name = CppObject<'static, #class_name, justcxx::Mut, justcxx::Owned>;
+        impl justcxx::CppTypeAliases for #class_name {
+            type Owned = CppObject<'static, #class_name, justcxx::Mut, justcxx::Owned>;
+            type Ref<'a> = CppObject<'a, #class_name, justcxx::Const, justcxx::Ref>;
+            type Mut<'a> = CppObject<'a, #class_name, justcxx::Mut, justcxx::Ref>;
+        }
     };
 
     let mut common_methods = Vec::new();

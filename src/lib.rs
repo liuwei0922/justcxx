@@ -42,5 +42,12 @@ pub trait AsCppPtr<T: CppClass> {
 }
 
 pub trait AsMutCppPtr<T: CppClass>: AsCppPtr<T> {}
+
+pub trait CppTypeAliases {
+    type Owned;
+    type Ref<'a>;
+    type Mut<'a>;
+}
+
 pub use justcxx_macro::bind;
 pub use cxx;
