@@ -37,38 +37,11 @@ where
     }
 }
 
-pub trait AsCppPtr<T: CppClass> {
-    fn as_cpp_ptr(&self) -> *mut T::FfiType;
-}
-
-pub trait AsMutCppPtr<T: CppClass>: AsCppPtr<T> {}
-
 pub trait CppTypeAliases {
     type Owned;
     type Ref<'a>;
     type Mut<'a>;
 }
-
-impl<T, C: CppClass> AsCppPtr<C> for &T
-where
-    T: AsCppPtr<C> + ?Sized,
-{
-    fn as_cpp_ptr(&self) -> *mut C::FfiType {
-        (**self).as_cpp_ptr()
-    }
-}
-
-impl<T, C: CppClass> AsCppPtr<C> for &mut T
-where
-    T: AsCppPtr<C> + ?Sized,
-{
-    fn as_cpp_ptr(&self) -> *mut C::FfiType {
-        (**self).as_cpp_ptr()
-    }
-}
-
-impl<T, C: CppClass> AsMutCppPtr<C> for &mut T where T: AsMutCppPtr<C> + ?Sized {}
-
 
 pub type CppOwned<T> = <T as CppTypeAliases>::Owned;
 pub type CppRef<'a, T> = <T as CppTypeAliases>::Ref<'a>;

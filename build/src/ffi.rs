@@ -35,7 +35,7 @@ pub fn generate_vec_ffi(vec_defs: &HashSet<VecDef>) -> TokenStream {
     let mut sorted_defs: Vec<&VecDef> = vec_defs.iter().collect();
     sorted_defs.sort_by(|a, b| a.elem_type.cmp(&b.elem_type).then(a.is_ptr.cmp(&b.is_ptr)));
 
-    for def in vec_defs {
+    for def in sorted_defs {
         let elem_ty_ident = format_ident!("{}", &def.elem_type);
         let elem_ty_ident_type = if &def.elem_type == "String" {
             quote! { String }
@@ -59,7 +59,7 @@ pub fn generate_vec_ffi(vec_defs: &HashSet<VecDef>) -> TokenStream {
             fn #len_fn(obj: &#ffi_type_name) -> usize;
 
             #[rust_name = #get_fn]
-            fn #get_fn(obj: Pin<&mut #ffi_type_name>, index: usize) -> #elem_ty_ident_type;
+            fn #get_fn(obj:  Pin<&mut #ffi_type_name>, index: usize) -> #elem_ty_ident_type;
         });
     }
     quote! { #(#items)* }
@@ -113,7 +113,7 @@ pub fn generate_map_ffi(
             fn #len_fn(obj: &#ffi_type_name) -> usize;
 
             #[rust_name = #get_fn]
-            fn #get_fn<'a>(obj: Pin<&'a mut #ffi_type_name>, key: #key_type) -> Result<#value_type>;
+            fn #get_fn<'a>(obj:  Pin<&'a mut #ffi_type_name>, key: #key_type) -> Result<#value_type>;
         });
 
         let iter_new_fn = format_ident!("{}_iter_new", ffi_type_name);
@@ -132,26 +132,26 @@ pub fn generate_map_ffi(
         let val_ret_type = if &def.value_type == "String" {
             quote! { String }
         } else {
-            quote! { Pin<&mut #value_ty_ident> }
+            quote! {  Pin<&mut #value_ty_ident> }
         };
 
         items.push(quote! {
             type #iter_ctx_name;
 
             #[rust_name = #iter_new_fn]
-            fn #iter_new_fn(obj: Pin<&mut #ffi_type_name>) -> UniquePtr<#iter_ctx_name>;
+            fn #iter_new_fn(obj:  Pin<&mut #ffi_type_name>) -> UniquePtr<#iter_ctx_name>;
 
             #[rust_name = #iter_key_fn]
-            fn #iter_key_fn(ctx: Pin<&mut #iter_ctx_name>) -> #key_ret_type;
+            fn #iter_key_fn(ctx:  Pin<&mut #iter_ctx_name>) -> #key_ret_type;
 
             #[rust_name = #iter_val_fn]
-            fn #iter_val_fn(ctx: Pin<&mut #iter_ctx_name>) -> #val_ret_type;
+            fn #iter_val_fn(ctx:  Pin<&mut #iter_ctx_name>) -> #val_ret_type;
 
             #[rust_name = #iter_step_fn]
-            fn #iter_step_fn(ctx: Pin<&mut #iter_ctx_name>);
+            fn #iter_step_fn(ctx:  Pin<&mut #iter_ctx_name>);
 
             #[rust_name = #iter_is_end_fn]
-            fn #iter_is_end_fn(ctx: Pin<&mut #iter_ctx_name>) -> bool;
+            fn #iter_is_end_fn(ctx:  Pin<&mut #iter_ctx_name>) -> bool;
         });
     }
     quote! { #(#items)* }
@@ -187,7 +187,7 @@ fn generate_ffi_field(
             };
             let set = quote! {
                 #[rust_name = #rust_ffi_set_name]
-                fn #cxx_ffi_set_name(obj: Pin<&mut #class_name>, value: #ty);
+                fn #cxx_ffi_set_name(obj:  Pin<&mut #class_name>, value: #ty);
             };
             if field.is_readonly {
                 get
@@ -204,12 +204,12 @@ fn generate_ffi_field(
             } else {
                 let get = quote! {
                     #[rust_name = #rust_ffi_get_name]
-                    fn #cxx_ffi_get_name(obj: Pin<&mut #class_name>) -> Pin<&mut #ty>;
+                    fn #cxx_ffi_get_name(obj:  Pin<&mut #class_name>) ->  Pin<&mut #ty>;
                 };
 
                 let set = quote! {
                     #[rust_name = #rust_ffi_set_name]
-                    fn #cxx_ffi_set_name(obj: Pin<&mut #class_name>, val: UniquePtr<#ty>);
+                    fn #cxx_ffi_set_name(obj:  Pin<&mut #class_name>, val: UniquePtr<#ty>);
                 };
 
                 quote! { #get #set }
@@ -217,7 +217,7 @@ fn generate_ffi_field(
         }
         FieldKind::OptObj { ty } => quote! {
             #[rust_name = #rust_ffi_get_name]
-            fn #cxx_ffi_get_name(obj: Pin<&mut #class_name>) -> Result<Pin<&mut #ty>>;
+            fn #cxx_ffi_get_name(obj:  Pin<&mut #class_name>) -> Result< Pin<&mut #ty>>;
         },
         FieldKind::OptVal { ty } => quote! {
             #[rust_name = #rust_ffi_get_name]
@@ -239,7 +239,7 @@ fn generate_ffi_field(
                 };
                 quote! {
                     #[rust_name = #rust_ffi_get_name]
-                    fn #cxx_ffi_get_name(obj: Pin<&mut #class_name>) -> Pin<&mut #map_type_name>;
+                    fn #cxx_ffi_get_name(obj:  Pin<&mut #class_name>) ->  Pin<&mut #map_type_name>;
                 }
             } else {
                 quote! {}
@@ -254,7 +254,7 @@ fn generate_ffi_field(
                 };
                 quote! {
                     #[rust_name = #rust_ffi_get_name]
-                    fn #cxx_ffi_get_name(obj: Pin<&mut #class_name>) -> Pin<&mut #vec_type_name>;
+                    fn #cxx_ffi_get_name(obj:  Pin<&mut #class_name>) ->  Pin<&mut #vec_type_name>;
                 }
             } else {
                 quote! {}
@@ -306,9 +306,9 @@ fn generate_ffi_method(
             quote! {
                 type #ctx_name;
                 #[rust_name = #new_fn]
-                fn #new_fn(obj: Pin<&mut #class_name>) -> UniquePtr<#ctx_name>;
+                fn #new_fn(obj:  Pin<&mut #class_name>) -> UniquePtr<#ctx_name>;
                 #[rust_name = #next_fn]
-                fn #next_fn(ctx: Pin<&mut #ctx_name>) -> UniquePtr<#yield_ty>;
+                fn #next_fn(ctx:  Pin<&mut #ctx_name>) -> UniquePtr<#yield_ty>;
             }
         }
         MethodDef::Method(func) => {
@@ -332,7 +332,7 @@ fn generate_ffi_method(
                 },
                 MethodKind::Mutable => quote! {
                     #[rust_name = #rust_ffi_fn_name]
-                    fn #cxx_ffi_fn_name(obj: Pin<&mut #class_name>, #(#args_sig),*) #ffi_ret;
+                    fn #cxx_ffi_fn_name(obj:  Pin<&mut #class_name>, #(#args_sig),*) #ffi_ret;
                 },
             }
         }
@@ -348,7 +348,7 @@ fn convert_args_sig(args: &[Arg], models: &HashMap<String, ClassModel>) -> Vec<T
             if let Some(info) = extract_defined_ref_info(&t, models) {
                 let elem = info.elem;
                 if info.is_mut {
-                    return quote! { #n: Pin<&mut #elem> };
+                    return quote! { #n:  Pin<&mut #elem> };
                 }
                 return quote! { #n: &#elem };
             }
@@ -374,7 +374,7 @@ fn convert_return_type(ret: &Option<Type>, models: &HashMap<String, ClassModel>)
     if let Some(info) = extract_defined_ref_info(ty, models) {
         let elem = info.elem;
         if info.is_mut {
-            return quote! { -> Pin<&mut #elem> };
+            return quote! { ->  Pin<&mut #elem> };
         } else {
             return quote! { -> &#elem };
         }
@@ -385,7 +385,7 @@ fn convert_return_type(ret: &Option<Type>, models: &HashMap<String, ClassModel>)
         if let Some(info) = extract_defined_ref_info(&inner_ty, models) {
             let elem = info.elem;
             if info.is_mut {
-                return quote! { -> Result<Pin<&mut #elem>> };
+                return quote! { -> Result< Pin<&mut #elem>> };
             } else {
                 return quote! { -> Result<&#elem> };
             }

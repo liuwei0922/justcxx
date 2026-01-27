@@ -32,13 +32,7 @@ pub fn generate_rust(bind_context: &BindContext) -> TokenStream {
     let includes = &bind_context.includes;
 
     quote! {
-        use std::pin::Pin;
         use cxx;
-
-        pub trait Map<K, V> {
-            type KeyType: ?Sized;
-            fn get(&mut self, key: &Self::KeyType) -> Option<V>;
-        }
 
         #[repr(transparent)]
         pub struct CppObject<'a, T: justcxx::CppClass, M: justcxx::Mode, S: justcxx::Storage<T>> {
@@ -54,38 +48,41 @@ pub fn generate_rust(bind_context: &BindContext) -> TokenStream {
 
         impl<'a, T: justcxx::CppClass, M: justcxx::Mode> Copy for CppObject<'a, T, M, justcxx::Ref> {}
 
-        impl<'a, T: justcxx::CppClass, M: justcxx::Mode, S: justcxx::Storage<T>> CppObject<'a, T, M, S> {
-            #[inline(always)]
+        impl<'a, T, M: justcxx::Mode, S: justcxx::Storage<T>> CppObject<'a, T, M, S>
+        where
+            T: justcxx::CppClass + justcxx::CppTypeAliases,
+        {
             pub fn as_ptr(&self) -> *mut T::FfiType {
                 unsafe { S::as_ptr(&self.inner) }
             }
 
-            pub fn as_ref(&self) -> CppObject<'a, T, M, justcxx::Ref> {
-                CppObject {
-                    inner: self.as_ptr(),
-                    _marker: std::marker::PhantomData,
-                }
-            }
-
-            pub fn as_const(&self) -> CppObject<'a, T, justcxx::Const, justcxx::Ref> {
+            pub fn as_ref(&self) -> CppObject<'a, T, justcxx::Const, justcxx::Ref> {
                 unsafe {
                     CppObject {
-                        inner: S::as_ptr(&self.inner),
+                        inner: self.as_ptr(),
                         _marker: std::marker::PhantomData,
                     }
                 }
             }
         }
 
-        impl<'a, T: justcxx::CppClass, M: justcxx::Mode, S: justcxx::Storage<T>> justcxx::AsCppPtr<T> for CppObject<'a, T, M, S> {
-            fn as_cpp_ptr(&self) -> *mut T::FfiType {
-                unsafe { S::as_ptr(&self.inner) }
+        impl<'a, T, S: justcxx::Storage<T>> CppObject<'a, T, justcxx::Mut, S>
+        where
+            T: justcxx::CppClass + justcxx::CppTypeAliases,
+        {
+            pub fn as_mut(&self) -> CppObject<'a, T, justcxx::Mut, justcxx::Ref> {
+                unsafe {
+                    CppObject {
+                        inner: self.as_ptr(),
+                        _marker: std::marker::PhantomData,
+                    }
+                }
             }
         }
 
-        impl<'a, T: justcxx::CppClass, S: justcxx::Storage<T>> justcxx::AsMutCppPtr<T> for CppObject<'a, T, justcxx::Mut, S> {}
-
-        impl<'a, T: justcxx::CppClass, M: justcxx::Mode, S: justcxx::Storage<T>> std::fmt::Debug for CppObject<'a, T, M, S> {
+        impl<'a, T: justcxx::CppClass, M: justcxx::Mode, S: justcxx::Storage<T>> std::fmt::Debug
+            for CppObject<'a, T, M, S>
+        {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 unsafe {
                     let ptr = S::as_ptr(&self.inner);
@@ -94,7 +91,9 @@ pub fn generate_rust(bind_context: &BindContext) -> TokenStream {
             }
         }
 
-        impl<'a, T: justcxx::CppClass, M: justcxx::Mode, S: justcxx::Storage<T>> PartialEq for CppObject<'a, T, M, S> {
+        impl<'a, T: justcxx::CppClass, M: justcxx::Mode, S: justcxx::Storage<T>> PartialEq
+            for CppObject<'a, T, M, S>
+        {
             fn eq(&self, other: &Self) -> bool {
                 unsafe {
                     let ptr1 = S::as_ptr(&self.inner);
@@ -103,7 +102,6 @@ pub fn generate_rust(bind_context: &BindContext) -> TokenStream {
                 }
             }
         }
-
         #[repr(transparent)]
         pub struct CppVector<T>(pub std::marker::PhantomData<T>);
         #[repr(transparent)]
@@ -224,6 +222,11 @@ fn generate_vec_wrappers(vec_defs: &HashSet<VecDef>) -> TokenStream {
             impl justcxx::CppClass for #rust_tag {
                 type FfiType = #ffi_type;
             }
+            impl justcxx::CppTypeAliases for #rust_tag {
+                type Owned = ();
+                type Ref<'a> = CppObject<'a, #rust_tag, justcxx::Const, justcxx::Ref>;
+                type Mut<'a> = CppObject<'a, #rust_tag, justcxx::Mut, justcxx::Ref>;
+            }
         });
 
         let type_prefix = if def.is_ptr {
@@ -310,13 +313,13 @@ fn generate_vec_obj(
 
         pub fn iter(&self) -> impl Iterator<Item = CppObject<'a, #elem_ident, justcxx::Const, justcxx::Ref>> + 'a where M: 'a {
              let this = self.as_ref();
-            (0..self.len()).map(move |i| this.get(i).as_const())
+            (0..self.len()).map(move |i| this.get(i).as_ref())
         }
     };
 
     let mut_methods = quote! {
         pub fn iter_mut(&mut self) -> impl Iterator<Item = CppObject<'a, #elem_ident, justcxx::Mut, justcxx::Ref>> + 'a {
-             let this = self.as_ref();
+             let this = self.as_mut();
             (0..self.len()).map(move |i| this.get(i))
         }
     };
@@ -373,6 +376,11 @@ fn generate_map_wrappers(
         items.push(quote! {
             impl justcxx::CppClass for #rust_tag {
                 type FfiType = ffi::#ffi_type;
+            }
+            impl justcxx::CppTypeAliases for #rust_tag {       
+                type Owned = ();         
+                type Ref<'a> = CppObject<'a, #rust_tag, justcxx::Const, justcxx::Ref>;
+                type Mut<'a> = CppObject<'a, #rust_tag, justcxx::Mut, justcxx::Ref>;
             }
         });
 
@@ -988,45 +996,91 @@ fn process_method_args(
         .unzip()
 }
 
+// fn process_single_arg(
+//     arg: &Arg,
+//     models: &HashMap<String, ClassModel>,
+// ) -> (TokenStream, TokenStream) {
+//     let arg_name = &arg.name;
+//     let arg_ty = &arg.ty;
+
+//     // ref
+//     if let Some(info) = extract_defined_ref_info(arg_ty, models) {
+//         let class_ident = format_ident!("{}", info.type_name);
+//         let is_mut_arg = info.is_mut;
+
+//         let decl = if is_mut_arg {
+//             quote! { #arg_name: &impl justcxx::AsMutCppPtr<#class_ident> }
+//         } else {
+//             quote! { #arg_name: &impl justcxx::AsCppPtr<#class_ident> }
+//         };
+
+//         let call = if is_mut_arg {
+//             quote! {
+//                 std::pin::Pin::new_unchecked(&mut *#arg_name.as_cpp_ptr())
+//             }
+//         } else {
+//             quote! {
+//                 &*#arg_name.as_cpp_ptr()
+//             }
+//         };
+
+//         return (decl, call);
+//     }
+//     // owned
+//     if let Some(type_name) = get_type_ident_name(arg_ty) {
+//         if models.contains_key(&type_name) {
+//             let class_ident = format_ident!("{}", type_name);
+//             let decl = quote! {
+//                 #arg_name: CppObject<'static, #class_ident, justcxx::Mut, justcxx::Owned>
+//             };
+//             let call = quote! { #arg_name.inner };
+
+//             return (decl, call);
+//         }
+//     }
+
+//     (quote! { #arg_name: #arg_ty }, quote! { #arg_name })
+// }
 fn process_single_arg(
     arg: &Arg,
     models: &HashMap<String, ClassModel>,
 ) -> (TokenStream, TokenStream) {
     let arg_name = &arg.name;
     let arg_ty = &arg.ty;
-
     // ref
     if let Some(info) = extract_defined_ref_info(arg_ty, models) {
         let class_ident = format_ident!("{}", info.type_name);
         let is_mut_arg = info.is_mut;
 
-        let decl = if is_mut_arg {
-            quote! { #arg_name: &impl justcxx::AsMutCppPtr<#class_ident> }
-        } else {
-            quote! { #arg_name: &impl justcxx::AsCppPtr<#class_ident> }
+        let decl = if is_mut_arg {            
+            quote! { #arg_name: &mut justcxx::CppMut<'_, #class_ident> }
+        } else {            
+            quote! { #arg_name: justcxx::CppRef<'_, #class_ident> }
         };
 
-        let call = if is_mut_arg {
+        let call = if is_mut_arg {            
             quote! {
-                std::pin::Pin::new_unchecked(&mut *#arg_name.as_cpp_ptr())
+                std::pin::Pin::new_unchecked(&mut *#arg_name.as_ptr())
             }
-        } else {
+        } else {            
             quote! {
-                &*#arg_name.as_cpp_ptr()
+                &*#arg_name.as_ptr()
             }
         };
 
         return (decl, call);
     }
-    // owned
+
+    // Owned
     if let Some(type_name) = get_type_ident_name(arg_ty) {
         if models.contains_key(&type_name) {
             let class_ident = format_ident!("{}", type_name);
+                        
             let decl = quote! {
-                #arg_name: CppObject<'static, #class_ident, justcxx::Mut, justcxx::Owned>
+                #arg_name: justcxx::CppOwned<#class_ident>
             };
+            
             let call = quote! { #arg_name.inner };
-
             return (decl, call);
         }
     }

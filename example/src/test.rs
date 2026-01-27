@@ -84,7 +84,7 @@ mod tests {
     #[test]
     fn test_cpp_obj_set4() {
         let manager = Manager::new();
-        let manager_const = manager.as_const();
+        let manager_const = manager.as_ref();
         // this will panic, because const pointer has no set method.
         // manager_const.config().set_id(150);
         assert_eq!(manager_const.config().id(), 42);
@@ -127,7 +127,7 @@ mod tests {
         let mut methods = Methods::new();
         let mut config = Config::new();
         config.set_id(100);
-        methods.set_config(&config);
+        methods.set_config(config.as_ref());
         assert_eq!(config.id(), 100);
     }
     #[test]
@@ -161,7 +161,7 @@ mod tests {
         let mut methods = Methods::new();
         let mut config = Config::new();
         config.set_id(120);
-        methods.set_config(&config);
+        methods.set_config(config.as_ref());
         let config = methods.create_config();
         assert_eq!(config.id(), 120);
     }
@@ -225,7 +225,7 @@ mod tests {
 
         let mut config = Config::new();
         config.set_id(555);
-        wallet.set_config(true, &config);
+        wallet.set_config(true, config.as_ref());
         assert_eq!(wallet.config().is_some(), true);
         assert_eq!(wallet.config().unwrap().id(), 555);
     }
