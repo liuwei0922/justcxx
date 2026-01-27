@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet};
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::{Attribute, Ident, LitStr, Result, Token, Type, braced, parenthesized};
+use quote::format_ident;
 
 pub fn extract_dsl(source: &str) -> Option<String> {
     let start_keyword = "bind!";
@@ -431,6 +432,7 @@ pub fn preprocess(input: &BindInput) -> BindContext {
     }
 
     check_field_kinds(&mut models);
+    inject_default_ctors(&mut models);
 
     let vec_defs = collect_vec_defs(&models);
     let map_defs = collect_map_defs(&models);
@@ -525,4 +527,23 @@ fn collect_map_defs(models: &HashMap<String, ClassModel>) -> HashSet<MapDef> {
         }
     }
     map_defs
+}
+
+
+fn inject_default_ctors(models: &mut HashMap<String, ClassModel>) {
+    for (_name, model) in models.iter_mut() {
+        let has_ctor = model.methods.iter().any(|m| matches!(m, MethodDef::Ctor(_)));
+        
+        if !has_ctor {
+            let default_ctor = MethodDef::Ctor(CtorDef {
+                rust_name: format_ident!("new"),
+                args: vec![],
+                cpp_name: format_ident!("new"),
+                is_user_defined: false,
+            });
+            
+            model.methods.push(default_ctor);
+            model.is_owned = true;
+        }
+    }
 }
