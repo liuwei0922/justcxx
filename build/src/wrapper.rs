@@ -708,8 +708,6 @@ fn generate_wrapper_field(
     (common_methods, mut_methods, None)
 }
 
-// gen_rust.rs
-
 fn generate_obj_field_methods(
     field_name: &Ident,
     ty: &Type,

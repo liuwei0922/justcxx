@@ -49,5 +49,25 @@ pub trait CppTypeAliases {
     type Mut<'a>;
 }
 
-pub use justcxx_macro::bind;
+impl<T, C: CppClass> AsCppPtr<C> for &T
+where
+    T: AsCppPtr<C> + ?Sized,
+{
+    fn as_cpp_ptr(&self) -> *mut C::FfiType {
+        (**self).as_cpp_ptr()
+    }
+}
+
+impl<T, C: CppClass> AsCppPtr<C> for &mut T
+where
+    T: AsCppPtr<C> + ?Sized,
+{
+    fn as_cpp_ptr(&self) -> *mut C::FfiType {
+        (**self).as_cpp_ptr()
+    }
+}
+
+impl<T, C: CppClass> AsMutCppPtr<C> for &mut T where T: AsMutCppPtr<C> + ?Sized {}
+
 pub use cxx;
+pub use justcxx_macro::bind;
