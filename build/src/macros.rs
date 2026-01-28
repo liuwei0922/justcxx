@@ -68,18 +68,22 @@ namespace bridge_detail {
         return s;
     }
 
-    // vector<Number> need slice
+    // // vector<Number> need slice
+    // template <typename T>
+    // inline
+    //     typename std::enable_if_t<std::is_arithmetic_v<T>, rust::Slice<const T>>
+    //     return_convert(const std::vector<T> &v) {
+    //     return rust::Slice<const T>(v.data(), v.size());
+    // }
+
+    // vector<T> need reference
     template <typename T>
-    inline
-        typename std::enable_if_t<std::is_arithmetic_v<T>, rust::Slice<const T>>
-        return_convert(const std::vector<T> &v) {
-        return rust::Slice<const T>(v.data(), v.size());
+    inline std::vector<T>& return_convert(std::vector<T> &v) {
+        return v;
     }
 
-    // vector<Object> need reference
     template <typename T>
-    inline typename std::enable_if_t<!std::is_arithmetic_v<T>, std::vector<T> &>
-    return_convert(std::vector<T> &v) {
+    inline const std::vector<T>& return_convert(const std::vector<T> &v) {
         return v;
     }
 
@@ -218,6 +222,9 @@ namespace bridge_detail {
         return std::forward<T>(arg);
     }
 
+    template <typename T> inline T& force_mut_ref(T& val) { return val; }
+    template <typename T> inline T& force_mut_ref(std::unique_ptr<T>& ptr) { return *ptr; }
+
     template <typename L, typename R>
     inline typename std::enable_if_t<is_unique_ptr<L>::value>
     assign_smart(L& lhs, R&& rhs) {
@@ -235,7 +242,41 @@ namespace bridge_detail {
     assign_smart(L& lhs, R&& rhs) {
         lhs = arg_convert(std::forward<R>(rhs));
     }
+       
+    template <typename T, typename Arg>
+    inline typename std::enable_if_t<
+        !is_unique_ptr<T>::value && is_unique_ptr<std::decay_t<Arg>>::value> 
+        push_smart(std::vector<T>& vec, Arg&& val) {
+        vec.push_back(std::move(*val));
+    }
+    
+    template <typename T, typename Arg>
+    inline typename std::enable_if_t<
+        is_unique_ptr<T>::value && is_unique_ptr<std::decay_t<Arg>>::value> 
+        push_smart(std::vector<T>& vec, Arg&& val) {
+        vec.push_back(std::move(val));
+    }
+
+    
+    template <typename T, typename Arg>
+    inline typename std::enable_if_t<
+        !is_unique_ptr<std::decay_t<Arg>>::value> 
+        push_smart(std::vector<T>& vec, Arg&& val) {
+        vec.push_back(arg_convert(std::forward<Arg>(val)));
+    }
 } // namespace bridge_detail
+
+
+using i8  = int8_t;
+using u8  = uint8_t;
+using i16 = int16_t;
+using u16 = uint16_t;
+using i32 = int32_t;
+using u32 = uint32_t;
+using i64 = int64_t;
+using u64 = uint64_t;
+using f32 = float;
+using f64 = double;
 
 #define DEFINE_VAL(CLASS, FIELD)                                               \
     inline auto CLASS##_get_##FIELD(const CLASS &obj)                          \
@@ -367,20 +408,49 @@ namespace bridge_detail {
     inline size_t VEC_TYPE##_len(const VEC_TYPE& self) { return self.size(); }
 
 #define DEFINE_VEC_GET(VEC_TYPE) \
-    inline decltype(auto) VEC_TYPE##_get(VEC_TYPE& self, size_t i) { \
-        return ::bridge_detail::return_convert(self[i]); \
+    inline decltype(auto) VEC_TYPE##_get(const VEC_TYPE& self, size_t i) { \
+        return ::bridge_detail::return_convert(self.at(i)); \
+    }
+
+#define DEFINE_VEC_GET_MUT(VEC_TYPE) \
+    inline decltype(auto) VEC_TYPE##_get_mut(VEC_TYPE& self, size_t i) { \
+        return ::bridge_detail::force_mut_ref(self.at(i)); \
+    }
+
+#define DEFINE_VEC_AS_SLICE(VEC_TYPE, ELEM_TYPE) \
+    template <typename T = ELEM_TYPE> \
+    inline typename std::enable_if_t<std::is_arithmetic_v<T>, rust::Slice<const T>> \
+    VEC_TYPE##_as_slice(const VEC_TYPE& self) { \
+        return rust::Slice<const T>(self.data(), self.size()); \
+    }
+
+#define DEFINE_VEC_AS_MUT_SLICE(VEC_TYPE, ELEM_TYPE) \
+    template <typename T = ELEM_TYPE> \
+    inline typename std::enable_if_t<std::is_arithmetic_v<T>, rust::Slice<T>> \
+    VEC_TYPE##_as_mut_slice(VEC_TYPE& self) { \
+        return rust::Slice<T>(self.data(), self.size()); \
     }
 
 #define DEFINE_VEC_PUSH(VEC_TYPE, ELEM_TYPE) \
     template <typename Arg> \
-    inline void VEC_TYPE##_push(VEC_TYPE& self, Arg&& val) { \
-        self.push_back(::bridge_detail::arg_convert(std::forward<Arg>(val))); \
+    inline void VEC_TYPE##_push(VEC_TYPE& self, Arg val) { \
+        ::bridge_detail::push_smart(self, std::move(val)); \
+    }
+
+#define DEFINE_VEC_SET(VEC_TYPE, ELEM_TYPE) \
+    template <typename Arg> \
+    inline void VEC_TYPE##_set(VEC_TYPE& self, size_t i, Arg val) { \
+        ::bridge_detail::assign_smart(self[i], std::move(val)); \
     }
 
 #define DEFINE_VEC_OPS(VEC_TYPE, ELEM_TYPE) \
     DEFINE_VEC_LEN(VEC_TYPE) \
     DEFINE_VEC_GET(VEC_TYPE) \
-    DEFINE_VEC_PUSH(VEC_TYPE, ELEM_TYPE)
+    DEFINE_VEC_GET_MUT(VEC_TYPE) \
+    DEFINE_VEC_PUSH(VEC_TYPE, ELEM_TYPE) \
+    DEFINE_VEC_AS_SLICE(VEC_TYPE, ELEM_TYPE) \
+    DEFINE_VEC_AS_MUT_SLICE(VEC_TYPE, ELEM_TYPE) \
+    DEFINE_VEC_SET(VEC_TYPE, ELEM_TYPE)
 
 #define DEFINE_MAP_ITER(MAP_TYPE) \
     struct MAP_TYPE##_IterCtx { \

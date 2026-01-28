@@ -78,6 +78,7 @@ struct IntContainer {
 struct ConfigContainer {
     std::vector<Config> data;
     std::vector<std::string> names;
+    std::vector<int> ids;
     ConfigContainer() {
         data.emplace_back();
         data.back().id = 100;

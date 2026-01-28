@@ -59,6 +59,7 @@ bind! {
     struct ConfigContainer{
         data: Vec<Config>,
         names: Vec<String>,
+        ids: Vec<i32>,
     }
 
     impl ConfigContainer{

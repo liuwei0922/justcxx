@@ -29,7 +29,7 @@ pub fn generate_ffi_block(class: &ClassModel, models: &HashMap<String, ClassMode
     quote! { #(#items)* }
 }
 
-pub fn generate_vec_ffi(vec_defs: &HashSet<VecDef>) -> TokenStream {
+pub fn generate_vec_ffi(vec_defs: &HashSet<VecDef>, models: &HashMap<String, ClassModel>) -> TokenStream {
     let mut items = Vec::new();
 
     let mut sorted_defs: Vec<&VecDef> = vec_defs.iter().collect();
@@ -37,10 +37,15 @@ pub fn generate_vec_ffi(vec_defs: &HashSet<VecDef>) -> TokenStream {
 
     for def in sorted_defs {
         let elem_ty_ident = format_ident!("{}", &def.elem_type);
-        let elem_ty_ident_type = if &def.elem_type == "String" {
-            quote! { String }
+        let (elem_ty_ident_type, value_type) = if &def.elem_type == "String" {
+            (quote! { String }, quote! { &str})
+        } else if models.contains_key(&def.elem_type) {
+            (
+                quote! { &#elem_ty_ident },
+                quote! {UniquePtr<#elem_ty_ident>},
+            )
         } else {
-            quote! { Pin<&mut #elem_ty_ident> }
+            (quote! { #elem_ty_ident }, quote! { #elem_ty_ident })
         };
         let ffi_type_name = if def.is_ptr {
             format_ident!("Vec_Ptr_{}", &def.elem_type)
@@ -50,7 +55,9 @@ pub fn generate_vec_ffi(vec_defs: &HashSet<VecDef>) -> TokenStream {
 
         let len_fn = format_ident!("{}_len", ffi_type_name);
         let get_fn = format_ident!("{}_get", ffi_type_name);
-        let _push_fn = format_ident!("{}_push", ffi_type_name);
+        let get_mut_fn = format_ident!("{}_get_mut", ffi_type_name);
+        let push_fn = format_ident!("{}_push", ffi_type_name);
+        let set_fn = format_ident!("{}_set", ffi_type_name);
 
         items.push(quote! {
             type #ffi_type_name;
@@ -59,8 +66,33 @@ pub fn generate_vec_ffi(vec_defs: &HashSet<VecDef>) -> TokenStream {
             fn #len_fn(obj: &#ffi_type_name) -> usize;
 
             #[rust_name = #get_fn]
-            fn #get_fn(obj:  Pin<&mut #ffi_type_name>, index: usize) -> #elem_ty_ident_type;
+            fn #get_fn(obj:  &#ffi_type_name, index: usize) -> Result<#elem_ty_ident_type>;
+
+            #[rust_name = #push_fn]
+            fn #push_fn(obj: Pin<&mut #ffi_type_name>, val: #value_type);
+
+            #[rust_name = #set_fn]
+            fn #set_fn(obj: Pin<&mut #ffi_type_name>, index: usize, val: #value_type);
         });
+
+        if &def.elem_type != "String" {
+            items.push(quote! {
+                #[rust_name = #get_mut_fn]
+                fn #get_mut_fn(obj: Pin<&mut #ffi_type_name>, index: usize) -> Result<Pin<&mut #elem_ty_ident>>;
+
+            });
+        }
+        if !models.contains_key(&def.elem_type) && &def.elem_type != "String" {
+            let slice_fn = format_ident!("{}_as_slice", ffi_type_name);
+            let mut_slice_fn = format_ident!("{}_as_mut_slice", ffi_type_name);
+            items.push(quote! {
+                #[rust_name = #slice_fn]
+                fn #slice_fn(obj: &#ffi_type_name) -> &[#elem_ty_ident];
+
+                #[rust_name = #mut_slice_fn]
+                fn #mut_slice_fn(obj: Pin<&mut #ffi_type_name>) -> &mut [#elem_ty_ident];
+            })
+        }
     }
     quote! { #(#items)* }
 }

@@ -18,8 +18,14 @@ pub fn generate_rust(bind_context: &BindContext) -> TokenStream {
         rust_wrapper_items.push(generate_wrapper_block(class, &bind_context.models));
     }
 
-    extern_cpp_items.push(generate_vec_ffi(&bind_context.vec_defs));
-    rust_wrapper_items.push(generate_vec_wrappers(&bind_context.vec_defs));
+    extern_cpp_items.push(generate_vec_ffi(
+        &bind_context.vec_defs,
+        &bind_context.models,
+    ));
+    rust_wrapper_items.push(generate_vec_wrappers(
+        &bind_context.vec_defs,
+        &bind_context.models,
+    ));
     extern_cpp_items.push(generate_map_ffi(
         &bind_context.map_defs,
         &bind_context.models,
@@ -200,7 +206,10 @@ fn generate_wrapper_block(class: &ClassModel, models: &HashMap<String, ClassMode
     }
 }
 
-fn generate_vec_wrappers(vec_defs: &HashSet<VecDef>) -> TokenStream {
+fn generate_vec_wrappers(
+    vec_defs: &HashSet<VecDef>,
+    models: &HashMap<String, ClassModel>,
+) -> TokenStream {
     let mut items = Vec::new();
 
     let mut sorted_defs: Vec<&VecDef> = vec_defs.iter().collect();
@@ -234,24 +243,108 @@ fn generate_vec_wrappers(vec_defs: &HashSet<VecDef>) -> TokenStream {
         } else {
             format!("Vec_{}", elem_str)
         };
-        let len_fn = format_ident!("{}_len", type_prefix);
-        let get_fn = format_ident!("{}_get", type_prefix);
-        // let push_fn = format_ident!("{}_push", type_prefix);
         if elem_str == "String" {
-            generate_vec_string(len_fn, get_fn, &rust_tag, &mut items);
+            generate_vec_string(&type_prefix, &rust_tag, &mut items);
+        } else if models.contains_key(elem_str) {
+            generate_vec_obj(&type_prefix, &elem_ident, &rust_tag, &mut items);
         } else {
-            generate_vec_obj(len_fn, get_fn, &elem_ident, &rust_tag, &mut items);
+            generate_vec_primitive(&type_prefix, &elem_ident, &rust_tag, &mut items)
         }
     }
     quote! { #(#items)* }
 }
 
-fn generate_vec_string(
-    len_fn: Ident,
-    get_fn: Ident,
+fn generate_vec_primitive(
+    type_prefix: &str,
+    elem_ident: &Ident,
     rust_tag: &TokenStream,
     items: &mut Vec<TokenStream>,
 ) {
+    let len_fn = format_ident!("{}_len", type_prefix);
+    let get_fn = format_ident!("{}_get", type_prefix);
+    let get_mut_fn = format_ident!("{}_get_mut", type_prefix);
+    let push_fn = format_ident!("{}_push", type_prefix);
+    let slice_fn = format_ident!("{}_as_slice", type_prefix);
+    let mut_slice_fn = format_ident!("{}_as_mut_slice", type_prefix);
+
+    let common_methods = quote! {
+        pub fn len(&self) -> usize {
+            unsafe {
+                let ptr = S::as_ptr(&self.inner);
+                ffi::#len_fn(&*ptr)
+            }
+        }
+        pub fn get(&self, index: usize) -> Option<#elem_ident> {
+            unsafe{
+                let ptr = S::as_ptr(&self.inner);
+                match ffi::#get_fn(&*ptr, index) {
+                    Ok(n) => Some(n),
+                    Err(_) => None,
+                }
+            }
+        }
+        pub fn as_slice(&self) -> &[#elem_ident] {
+            unsafe {
+                let ptr = S::as_ptr(&self.inner);
+                ffi::#slice_fn(&*ptr)
+            }
+        }
+
+        pub fn iter(&self) -> impl Iterator<Item = &#elem_ident>{
+            self.as_slice().iter()
+        }
+    };
+
+    let mut_methods = quote! {
+        pub fn get_mut(&mut self, index: usize) -> Option<&mut #elem_ident> {            
+            unsafe{
+                let ptr = S::as_ptr(&self.inner);
+                let pin_self = std::pin::Pin::new_unchecked(&mut *ptr);
+                match ffi::#get_mut_fn(pin_self, index) {
+                    Ok(ret) => Some(
+                        ret.get_unchecked_mut()
+                    ),
+                    Err(_) => None,
+                }
+            }            
+        }
+
+        pub fn push(&mut self, val: #elem_ident) {
+            unsafe {
+                let ptr = S::as_ptr(&self.inner);
+                let pin_self = std::pin::Pin::new_unchecked(&mut *ptr);
+                ffi::#push_fn(pin_self, val);
+            }
+        }
+
+        pub fn as_mut_slice(&self) -> &mut [#elem_ident] {
+            unsafe {
+                let ptr = S::as_ptr(&self.inner);
+                let pin_self = std::pin::Pin::new_unchecked(&mut *ptr);
+                ffi::#mut_slice_fn(pin_self)
+            }
+        }
+        pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut #elem_ident>{
+            self.as_mut_slice().iter_mut()
+        }
+    };
+
+    items.push(quote! {
+        impl<'a, M: justcxx::Mode, S: justcxx::Storage<#rust_tag>> CppObject<'a, #rust_tag, M, S> {
+            #common_methods
+        }
+        impl<'a, S: justcxx::Storage<#rust_tag>> CppObject<'a, #rust_tag, justcxx::Mut, S> {
+            #mut_methods
+        }
+    });
+}
+
+fn generate_vec_string(type_prefix: &str, rust_tag: &TokenStream, items: &mut Vec<TokenStream>) {
+    let len_fn = format_ident!("{}_len", type_prefix);
+    let set_fn = format_ident!("{}_set", type_prefix);
+    let get_fn = format_ident!("{}_get", type_prefix);
+    let push_fn = format_ident!("{}_push", type_prefix);
+
     let common_methods = quote! {
         pub fn len(&self) -> usize {
             unsafe {
@@ -260,16 +353,40 @@ fn generate_vec_string(
                 ffi::#len_fn(&*ptr)
             }
         }
-        pub unsafe fn get(&self, index: usize) -> String {
-            let ptr = S::as_ptr(&self.inner);
-            let pin_self = std::pin::Pin::new_unchecked(&mut *ptr);
-            let s =ffi::#get_fn(pin_self, index);
-            s
+        pub unsafe fn get(&self, index: usize) -> Option<String> {
+            unsafe{
+                let ptr = S::as_ptr(&self.inner);
+                match ffi::#get_fn(&*ptr, index) {
+                    Ok(s) => Some(s),
+                    Err(_) => None,
+                }
+            }
         }
 
         pub fn iter(&self) -> impl Iterator<Item = String> {
              let this = self.as_ref();
-            (0..this.len()).map(move |i| unsafe{this.get(i)})
+            (0..this.len()).map(move |i| unsafe{this.get(i).unwrap()})
+        }
+    };
+
+    let mut_methods = quote! {
+        pub fn push(&mut self, val: &str) {
+            unsafe {
+                let ptr = S::as_ptr(&self.inner);
+                let pin_self = std::pin::Pin::new_unchecked(&mut *ptr);
+                ffi::#push_fn(pin_self, val);
+            }
+        }
+
+        pub fn set(&mut self,index: usize, val: &str) {
+            if index >= self.len() {
+                panic!("index out of bounds: the len is {} but the index is {}", self.len(), index);
+            }
+            unsafe {
+                let ptr = S::as_ptr(&self.inner);
+                let pin_self = std::pin::Pin::new_unchecked(&mut *ptr);
+                ffi::#set_fn(pin_self,index, val);
+            }
         }
     };
 
@@ -279,16 +396,25 @@ fn generate_vec_string(
         {
             #common_methods
         }
+        impl<'a, S: justcxx::Storage<#rust_tag>>
+            CppObject<'a, #rust_tag, justcxx::Mut, S>
+        {
+            #mut_methods
+        }
+
     });
 }
 
 fn generate_vec_obj(
-    len_fn: Ident,
-    get_fn: Ident,
+    type_prefix: &str,
     elem_ident: &Ident,
     rust_tag: &TokenStream,
     items: &mut Vec<TokenStream>,
 ) {
+    let len_fn = format_ident!("{}_len", type_prefix);
+    let get_fn = format_ident!("{}_get", type_prefix);
+    let get_mut_fn = format_ident!("{}_get_mut", type_prefix);
+    let push_fn = format_ident!("{}_push", type_prefix);
     let common_methods = quote! {
         pub fn len(&self) -> usize {
             unsafe {
@@ -297,30 +423,58 @@ fn generate_vec_obj(
                 ffi::#len_fn(&*ptr)
             }
         }
-        pub fn get(&self, index: usize) -> CppObject<'a, #elem_ident, M, justcxx::Ref> {
-            unsafe {
+        pub fn get(&self, index: usize) -> Option<CppObject<'a, #elem_ident, justcxx::Const, justcxx::Ref>> {
+            unsafe{
                 let ptr = S::as_ptr(&self.inner);
-                let pin_self = std::pin::Pin::new_unchecked(&mut *ptr);
-                let ret_pin = ffi::#get_fn(pin_self, index);
-                let ret_ptr = ret_pin.get_unchecked_mut() as *mut _;
-
-                CppObject {
-                    inner: ret_ptr,
-                    _marker: std::marker::PhantomData
+                match ffi::#get_fn(&*ptr, index) {
+                    Ok(ret_ref) => {
+                        let ret_ptr = (ret_ref as *const _) as *mut _;
+                        Some(CppObject {
+                            inner: ret_ptr,
+                            _marker: std::marker::PhantomData
+                        })
+                    },
+                    Err(_) => None,
                 }
             }
+
         }
 
         pub fn iter(&self) -> impl Iterator<Item = CppObject<'a, #elem_ident, justcxx::Const, justcxx::Ref>> + 'a where M: 'a {
              let this = self.as_ref();
-            (0..self.len()).map(move |i| this.get(i).as_ref())
+            (0..self.len()).map(move |i| this.get(i).unwrap().as_ref())
         }
     };
 
     let mut_methods = quote! {
+        pub fn get_mut(&mut self, index: usize) -> Option<CppObject<'a, #elem_ident, justcxx::Mut, justcxx::Ref>>{
+            unsafe{
+                let ptr = S::as_ptr(&self.inner);
+                let pin_self = std::pin::Pin::new_unchecked(&mut *ptr);
+                match ffi::#get_mut_fn(pin_self, index) {
+                    Ok(ret_ref) => {                        
+                        let ret_ptr = ret_ref.get_unchecked_mut() as *mut _;
+                        Some(CppObject {
+                            inner: ret_ptr,
+                            _marker: std::marker::PhantomData
+                        })
+                    },
+                    Err(_) => None,
+                }
+            }            
+        }
+
+        pub fn push(&mut self, val: justcxx::CppOwned<#elem_ident>){
+            unsafe{
+                let ptr = S::as_ptr(&self.inner);
+                let pin_self = std::pin::Pin::new_unchecked(&mut *ptr);
+                ffi::#push_fn(pin_self, val.inner);
+            }
+        }
+
         pub fn iter_mut(&mut self) -> impl Iterator<Item = CppObject<'a, #elem_ident, justcxx::Mut, justcxx::Ref>> + 'a {
-             let this = self.as_mut();
-            (0..self.len()).map(move |i| this.get(i))
+             let mut this = self.as_mut();
+            (0..self.len()).map(move |i| this.get_mut(i).unwrap())
         }
     };
 
@@ -377,8 +531,8 @@ fn generate_map_wrappers(
             impl justcxx::CppClass for #rust_tag {
                 type FfiType = ffi::#ffi_type;
             }
-            impl justcxx::CppTypeAliases for #rust_tag {       
-                type Owned = ();         
+            impl justcxx::CppTypeAliases for #rust_tag {
+                type Owned = ();
                 type Ref<'a> = CppObject<'a, #rust_tag, justcxx::Const, justcxx::Ref>;
                 type Mut<'a> = CppObject<'a, #rust_tag, justcxx::Mut, justcxx::Ref>;
             }
@@ -607,7 +761,7 @@ fn generate_wrapper_field(
                 });
             }
         }
-        FieldKind::Obj => generate_obj_field_methods(
+        FieldKind::Obj => generate_field_obj(
             field_name,
             &field.ty,
             field.is_readonly,
@@ -716,7 +870,7 @@ fn generate_wrapper_field(
     (common_methods, mut_methods, None)
 }
 
-fn generate_obj_field_methods(
+fn generate_field_obj(
     field_name: &Ident,
     ty: &Type,
     is_readonly: bool,
@@ -725,7 +879,7 @@ fn generate_obj_field_methods(
     ffi_set_name: &Ident,
     common_methods: &mut Vec<TokenStream>,
     mut_methods: &mut Vec<TokenStream>,
-) {    
+) {
     if is_readonly {
         common_methods.push(quote! {
             pub fn #field_name(&self) -> CppObject<'a, #ty, justcxx::Const, justcxx::Ref> {
@@ -996,51 +1150,6 @@ fn process_method_args(
         .unzip()
 }
 
-// fn process_single_arg(
-//     arg: &Arg,
-//     models: &HashMap<String, ClassModel>,
-// ) -> (TokenStream, TokenStream) {
-//     let arg_name = &arg.name;
-//     let arg_ty = &arg.ty;
-
-//     // ref
-//     if let Some(info) = extract_defined_ref_info(arg_ty, models) {
-//         let class_ident = format_ident!("{}", info.type_name);
-//         let is_mut_arg = info.is_mut;
-
-//         let decl = if is_mut_arg {
-//             quote! { #arg_name: &impl justcxx::AsMutCppPtr<#class_ident> }
-//         } else {
-//             quote! { #arg_name: &impl justcxx::AsCppPtr<#class_ident> }
-//         };
-
-//         let call = if is_mut_arg {
-//             quote! {
-//                 std::pin::Pin::new_unchecked(&mut *#arg_name.as_cpp_ptr())
-//             }
-//         } else {
-//             quote! {
-//                 &*#arg_name.as_cpp_ptr()
-//             }
-//         };
-
-//         return (decl, call);
-//     }
-//     // owned
-//     if let Some(type_name) = get_type_ident_name(arg_ty) {
-//         if models.contains_key(&type_name) {
-//             let class_ident = format_ident!("{}", type_name);
-//             let decl = quote! {
-//                 #arg_name: CppObject<'static, #class_ident, justcxx::Mut, justcxx::Owned>
-//             };
-//             let call = quote! { #arg_name.inner };
-
-//             return (decl, call);
-//         }
-//     }
-
-//     (quote! { #arg_name: #arg_ty }, quote! { #arg_name })
-// }
 fn process_single_arg(
     arg: &Arg,
     models: &HashMap<String, ClassModel>,
@@ -1052,17 +1161,17 @@ fn process_single_arg(
         let class_ident = format_ident!("{}", info.type_name);
         let is_mut_arg = info.is_mut;
 
-        let decl = if is_mut_arg {            
+        let decl = if is_mut_arg {
             quote! { #arg_name: &mut justcxx::CppMut<'_, #class_ident> }
-        } else {            
+        } else {
             quote! { #arg_name: justcxx::CppRef<'_, #class_ident> }
         };
 
-        let call = if is_mut_arg {            
+        let call = if is_mut_arg {
             quote! {
                 std::pin::Pin::new_unchecked(&mut *#arg_name.as_ptr())
             }
-        } else {            
+        } else {
             quote! {
                 &*#arg_name.as_ptr()
             }
@@ -1075,11 +1184,11 @@ fn process_single_arg(
     if let Some(type_name) = get_type_ident_name(arg_ty) {
         if models.contains_key(&type_name) {
             let class_ident = format_ident!("{}", type_name);
-                        
+
             let decl = quote! {
                 #arg_name: justcxx::CppOwned<#class_ident>
             };
-            
+
             let call = quote! { #arg_name.inner };
             return (decl, call);
         }

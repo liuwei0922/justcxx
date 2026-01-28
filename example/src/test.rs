@@ -211,6 +211,20 @@ mod tests {
     }
 
     #[test]
+    fn test_vec_number(){
+        let container = ConfigContainer::new();
+        let mut vec = container.ids();
+        assert_eq!(vec.len(),0);
+        vec.push(10);
+        vec.push(20);
+        vec.push(30);
+        assert_eq!(vec.len(),3);
+        assert_eq!(vec.get(0).unwrap(),10);
+        let sum = vec.iter().fold(0, |a,b|a+b);
+        assert_eq!(sum,60);
+    }
+
+    #[test]
     fn test_option_val() {
         let mut chance = Chance::new();
         assert_eq!(chance.probability(), Some(75));
@@ -245,10 +259,10 @@ mod tests {
     }
 
     #[test]
-    fn test_map_key_string_val_obj(){
+    fn test_map_key_string_val_obj() {
         let map_example = MapExample::new();
         let str_config_map = map_example.str_config_map();
-        assert_eq!(str_config_map.len(),1);
+        assert_eq!(str_config_map.len(), 1);
         assert_eq!(str_config_map.get("one").unwrap().id(), 30);
     }
 }
