@@ -211,17 +211,20 @@ mod tests {
     }
 
     #[test]
-    fn test_vec_number(){
+    fn test_vec_number() {
         let container = ConfigContainer::new();
         let mut vec = container.ids();
-        assert_eq!(vec.len(),0);
+        assert_eq!(vec.len(), 0);
         vec.push(10);
         vec.push(20);
         vec.push(30);
-        assert_eq!(vec.len(),3);
-        assert_eq!(vec.get(0).unwrap(),10);
-        let sum = vec.iter().fold(0, |a,b|a+b);
-        assert_eq!(sum,60);
+        assert_eq!(vec.len(), 3);
+        assert_eq!(vec.get(0).unwrap(), 10);
+        let sum = vec.iter().fold(0, |a, b| a + b);
+        assert_eq!(sum, 60);
+
+        vec.iter_mut().for_each(|a| *a += 10);
+        assert_eq!(vec.iter().fold(0, |a, b| a + b), 90);
     }
 
     #[test]

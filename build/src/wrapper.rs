@@ -221,20 +221,30 @@ fn generate_vec_wrappers(
 
         let (ffi_type, rust_tag) = if def.is_ptr {
             let ffi = format_ident!("Vec_Ptr_{}", elem_str);
-            (quote! { ffi::#ffi }, quote! { CppVectorPtr<#elem_ident> })
+            (ffi, quote! { CppVectorPtr<#elem_ident> })
         } else {
             let ffi = format_ident!("Vec_{}", elem_str);
-            (quote! { ffi::#ffi }, quote! { CppVector<#elem_ident> })
+            (ffi, quote! { CppVector<#elem_ident> })
         };
+        let new_fn = format_ident!("make_{}_new", &ffi_type);
 
         items.push(quote! {
             impl justcxx::CppClass for #rust_tag {
-                type FfiType = #ffi_type;
+                type FfiType = ffi::#ffi_type;
             }
             impl justcxx::CppTypeAliases for #rust_tag {
-                type Owned = ();
+                type Owned = CppObject<'static, #rust_tag, justcxx::Mut, justcxx::Owned>;
                 type Ref<'a> = CppObject<'a, #rust_tag, justcxx::Const, justcxx::Ref>;
                 type Mut<'a> = CppObject<'a, #rust_tag, justcxx::Mut, justcxx::Ref>;
+            }
+
+            impl #rust_tag {
+                pub fn new() -> CppObject<'static, #rust_tag, justcxx::Mut, justcxx::Owned> {
+                    unsafe {
+                        let ptr = ffi::#new_fn();
+                        CppObject { inner: ptr, _marker: std::marker::PhantomData}
+                    }
+                }
             }
         });
 
@@ -296,7 +306,7 @@ fn generate_vec_primitive(
     };
 
     let mut_methods = quote! {
-        pub fn get_mut(&mut self, index: usize) -> Option<&mut #elem_ident> {            
+        pub fn get_mut(&mut self, index: usize) -> Option<&mut #elem_ident> {
             unsafe{
                 let ptr = S::as_ptr(&self.inner);
                 let pin_self = std::pin::Pin::new_unchecked(&mut *ptr);
@@ -306,7 +316,7 @@ fn generate_vec_primitive(
                     ),
                     Err(_) => None,
                 }
-            }            
+            }
         }
 
         pub fn push(&mut self, val: #elem_ident) {
@@ -452,7 +462,7 @@ fn generate_vec_obj(
                 let ptr = S::as_ptr(&self.inner);
                 let pin_self = std::pin::Pin::new_unchecked(&mut *ptr);
                 match ffi::#get_mut_fn(pin_self, index) {
-                    Ok(ret_ref) => {                        
+                    Ok(ret_ref) => {
                         let ret_ptr = ret_ref.get_unchecked_mut() as *mut _;
                         Some(CppObject {
                             inner: ret_ptr,
@@ -461,7 +471,7 @@ fn generate_vec_obj(
                     },
                     Err(_) => None,
                 }
-            }            
+            }
         }
 
         pub fn push(&mut self, val: justcxx::CppOwned<#elem_ident>){

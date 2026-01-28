@@ -183,7 +183,7 @@ fn generate_vec_shims(vec_defs: &HashSet<VecDef>, lines: &mut Vec<String>) {
                 "using {} = std::vector<std::unique_ptr<{}>>;",
                 alias, elem_type
             ));
-            lines.push(format!("DEFINE_VEC_OPS({}, {})", alias, elem_type));
+            lines.push(format!("DEFINE_VEC_OPS({}, {})", alias, elem_type));           
         } else {
             let alias = format!("Vec_{}", &def.elem_type);
             lines.push(format!("using {} = std::vector<{}>;", alias, elem_type));
@@ -204,14 +204,14 @@ fn generate_map_shims(map_defs: &HashSet<MapDef>, lines: &mut Vec<String>) {
 
     for def in sorted_defs {
         let key_type = if &def.key_type == "String" {
-            "std::string".to_string()
+            "std::string"
         } else {
-            rust_type_to_cpp(&def.key_type)
+            &def.key_type
         };
         let value_type = if &def.value_type == "String" {
-            "std::string".to_string()
+            "std::string"
         } else {
-            rust_type_to_cpp(&def.value_type)
+            &def.value_type
         };
 
         if def.is_value_ptr {
@@ -233,23 +233,5 @@ fn generate_map_shims(map_defs: &HashSet<MapDef>, lines: &mut Vec<String>) {
         }
 
         lines.push("".to_string()); // 空行分隔
-    }
-}
-
-fn rust_type_to_cpp(rust_type: &str) -> String {
-    match rust_type {
-        "i8" => "int8_t".to_string(),
-        "u8" => "uint8_t".to_string(),
-        "i16" => "int16_t".to_string(),
-        "u16" => "uint16_t".to_string(),
-        "i32" => "int32_t".to_string(),
-        "u32" => "uint32_t".to_string(),
-        "i64" => "int64_t".to_string(),
-        "u64" => "uint64_t".to_string(),
-        "f32" => "float".to_string(),
-        "f64" => "double".to_string(),
-        "bool" => "bool".to_string(),
-        "String" => "std::string".to_string(),
-        other => other.to_string(),
     }
 }

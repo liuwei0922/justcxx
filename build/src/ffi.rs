@@ -58,10 +58,14 @@ pub fn generate_vec_ffi(vec_defs: &HashSet<VecDef>, models: &HashMap<String, Cla
         let get_mut_fn = format_ident!("{}_get_mut", ffi_type_name);
         let push_fn = format_ident!("{}_push", ffi_type_name);
         let set_fn = format_ident!("{}_set", ffi_type_name);
+        let new_fn = format_ident!("make_{}_new", ffi_type_name);
 
         items.push(quote! {
             type #ffi_type_name;
 
+            #[rust_name = #new_fn]
+            fn #new_fn() -> UniquePtr<#ffi_type_name>;
+            
             #[rust_name = #len_fn]
             fn #len_fn(obj: &#ffi_type_name) -> usize;
 

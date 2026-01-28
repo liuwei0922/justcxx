@@ -443,6 +443,11 @@ using f64 = double;
         ::bridge_detail::assign_smart(self[i], std::move(val)); \
     }
 
+#define DEFINE_VEC_CTOR(VEC_TYPE) \
+    inline std::unique_ptr<VEC_TYPE> make_##VEC_TYPE##_new() { \
+        return std::make_unique<VEC_TYPE>(); \
+    }
+
 #define DEFINE_VEC_OPS(VEC_TYPE, ELEM_TYPE) \
     DEFINE_VEC_LEN(VEC_TYPE) \
     DEFINE_VEC_GET(VEC_TYPE) \
@@ -450,7 +455,8 @@ using f64 = double;
     DEFINE_VEC_PUSH(VEC_TYPE, ELEM_TYPE) \
     DEFINE_VEC_AS_SLICE(VEC_TYPE, ELEM_TYPE) \
     DEFINE_VEC_AS_MUT_SLICE(VEC_TYPE, ELEM_TYPE) \
-    DEFINE_VEC_SET(VEC_TYPE, ELEM_TYPE)
+    DEFINE_VEC_SET(VEC_TYPE, ELEM_TYPE) \
+    DEFINE_VEC_CTOR(VEC_TYPE) \
 
 #define DEFINE_MAP_ITER(MAP_TYPE) \
     struct MAP_TYPE##_IterCtx { \
