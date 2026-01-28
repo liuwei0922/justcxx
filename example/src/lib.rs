@@ -53,7 +53,7 @@ bind! {
 
         fn create_config(&self) -> Config;
 
-        fn optional_id(&self, flag: bool) -> Option<i32>;
+        fn optional_id(&self, flag: bool) -> Option<i32>;        
     }
 
     struct ConfigContainer{

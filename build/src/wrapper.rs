@@ -58,7 +58,7 @@ pub fn generate_rust(bind_context: &BindContext) -> TokenStream {
         where
             T: justcxx::CppClass + justcxx::CppTypeAliases,
         {
-            pub fn as_ptr(&self) -> *mut T::FfiType {
+            fn as_ptr(&self) -> *mut T::FfiType {
                 unsafe { S::as_ptr(&self.inner) }
             }
 
@@ -962,7 +962,7 @@ fn generate_wrapper_method(
             let (args_def, args_call) = process_method_args(&ctor.args, models);
 
             static_methods.push(quote! {
-                    pub fn #name(#(#args_def),*) -> CppObject<'static, #class_name, justcxx::Mut, justcxx::Owned> {
+                    pub fn #name(#(#args_def),*) -> justcxx::CppOwned<#class_name> {
                         unsafe {
                             let unique_ptr = ffi::#ffi_unique_name(#(#args_call),*);
                             CppObject {

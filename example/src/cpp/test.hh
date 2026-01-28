@@ -39,6 +39,7 @@ struct School {
 struct Methods{
     int id;
     Config config;
+    std::vector<int> nums;
     int get_id() const {
         return id;
     }
@@ -62,6 +63,10 @@ struct Methods{
     }
     std::optional<int> optional_id(bool flag) const {
         return flag ? std::optional<int>(id) : std::nullopt;
+    }
+
+    std::vector<int>& return_nums() {
+        return nums;
     }
     
     Methods() = default;

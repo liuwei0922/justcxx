@@ -405,7 +405,7 @@ pub fn preprocess(input: &BindInput) -> BindContext {
             BindItem::Struct(def) => {
                 let name = def.name.clone();
                 let name_str = name.to_string();
-                let mut model = ClassModel::new(name, false);
+                let mut model = ClassModel::new(name);
 
                 if def.fields.iter().any(|f| f.is_protected) {
                     model.needs_exposer = true;
@@ -464,17 +464,6 @@ fn check_field_kinds(models: &mut HashMap<String, ClassModel>) {
                 field.kind = FieldKind::OptObj { ty: ty.clone() };
             }
         }
-    }
-}
-
-#[allow(dead_code)]
-fn check_owned_kinds(models: &mut HashMap<String, ClassModel>) {
-    for model in models.values_mut() {
-        model.is_owned = !model.is_owned
-            && model
-                .methods
-                .iter()
-                .any(|m| matches!(m, MethodDef::Ctor(_)));
     }
 }
 
@@ -543,7 +532,6 @@ fn inject_default_ctors(models: &mut HashMap<String, ClassModel>) {
             });
             
             model.methods.push(default_ctor);
-            model.is_owned = true;
         }
     }
 }

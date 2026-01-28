@@ -92,17 +92,15 @@ pub struct Arg {
 
 pub struct ClassModel {
     pub name: Ident,
-    pub is_owned: bool,
     pub fields: Vec<FieldDef>,
     pub methods: Vec<MethodDef>,
     pub needs_exposer: bool,
 }
 
 impl ClassModel {
-    pub fn new(name: Ident, is_owned: bool) -> Self {
+    pub fn new(name: Ident) -> Self {
         Self {
             name,
-            is_owned,
             fields: Vec::new(),
             methods: Vec::new(),
             needs_exposer: false,
