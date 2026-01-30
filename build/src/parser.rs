@@ -1,37 +1,109 @@
 use crate::ast::*;
 use crate::utils::*;
-use std::collections::{HashMap, HashSet};
+use quote::ToTokens;
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::{Attribute, Ident, LitStr, Result, Token, Type, braced, parenthesized};
-use quote::format_ident;
 
-pub fn extract_dsl(source: &str) -> Option<String> {
-    let start_keyword = "bind!";
-    let start_idx = source.find(start_keyword)?;
+impl TryFrom<&syn::Type> for TypeKind {
+    type Error = syn::Error;
+
+    fn try_from(ty: &syn::Type) -> Result<Self> {
+        match ty {
+            syn::Type::Path(p) => parse_type_path(p),
+            syn::Type::Reference(r) => parse_type_reference(r),
+            syn::Type::Slice(s) => parse_type_slice(s),
+            _ => Err(syn::Error::new_spanned(ty, "Unsupported type syntax")),
+        }
+    }
+}
+
+fn parse_type_path(p: &syn::TypePath) -> Result<TypeKind> {
+    let segment = p
+        .path
+        .segments
+        .last()
+        .ok_or_else(|| syn::Error::new_spanned(p, "Empty type path"))?;
+    let ident = segment.ident.to_string();
+
+    if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
+        return match ident.as_str() {
+            "Vec" => parse_vec(args),
+            "Map" => parse_map(args),
+            "Option" => parse_option(args),
+            "UniquePtr" => parse_unique_ptr(args),
+            _ => Err(syn::Error::new_spanned(p, "Unknown generic type")),
+        };
+    }
+
+    match ident.as_str() {
+        "String" => Ok(TypeKind::String),
+        s if is_primitive(s) => Ok(TypeKind::Primitive(s.to_string())),
+        s => Ok(TypeKind::Object(s.to_string())),
+    }
+}
+
+fn parse_type_reference(r: &syn::TypeReference) -> Result<TypeKind> {
+    let inner = TypeKind::try_from(&*r.elem)?;
+    Ok(TypeKind::Reference {
+        inner: Box::new(inner),
+        is_mut: r.mutability.is_some(),
+    })
+}
+
+fn parse_vec(args: &syn::AngleBracketedGenericArguments) -> Result<TypeKind> {
+    let inner_ty = get_single_arg(args)?;
+    let (real_inner, is_ptr) = extract_unique_ptr_info(inner_ty)?;
+    Ok(TypeKind::Vector {
+        inner: Box::new(real_inner),
+        is_ptr,
+    })
+}
+
+fn parse_map(args: &syn::AngleBracketedGenericArguments) -> Result<TypeKind> {
+    let (k, v) = get_double_args(args)?;
+    let (real_val, is_val_ptr) = extract_unique_ptr_info(&v)?;
+    let key_kind = TypeKind::try_from(k)?;
+    Ok(TypeKind::Map {
+        key: Box::new(key_kind),
+        value: Box::new(real_val),
+        is_val_ptr,
+    })
+}
+
+fn parse_option(args: &syn::AngleBracketedGenericArguments) -> Result<TypeKind> {
+    let inner_ty = get_single_arg(args)?;
+    let inner_ty_kind = TypeKind::try_from(inner_ty)?;
+    Ok(TypeKind::Option(Box::new(inner_ty_kind)))
+}
+
+fn parse_unique_ptr(args: &syn::AngleBracketedGenericArguments) -> Result<TypeKind> {
+    let inner_ty = get_single_arg(args)?;
+    let inner_ty_kind = TypeKind::try_from(inner_ty)?;
+    Ok(TypeKind::UniquePtr(Box::new(inner_ty_kind)))
+}
+
+fn parse_type_slice(s: &syn::TypeSlice) -> Result<TypeKind> {
+    let inner_kind = TypeKind::try_from(&*s.elem)?;
+    Ok(TypeKind::Slice(Box::new(inner_kind)))
+}
+
+pub fn extract_dsl(source: &str) -> Option<&str> {
+    let start_idx = source.find("bind!")?;
     let open_brace_idx = source[start_idx..].find('{')? + start_idx;
+
     let mut depth = 0;
-    let mut end_idx = 0;
-    let mut found = false;
-    for (i, c) in source[open_brace_idx..].char_indices() {
-        match c {
-            '{' => depth += 1,
-            '}' => {
-                depth -= 1;
-                if depth == 0 {
-                    end_idx = open_brace_idx + i;
-                    found = true;
-                    break;
-                }
-            }
+    let content_start = open_brace_idx + 1;
+
+    for (rel_idx, b) in source[content_start..].bytes().enumerate() {
+        match b {
+            b'{' => depth += 1,
+            b'}' if depth == 0 => return Some(&source[content_start..content_start + rel_idx]),
+            b'}' => depth -= 1,
             _ => {}
         }
     }
-    if found {
-        Some(source[open_brace_idx + 1..end_idx].to_string())
-    } else {
-        None
-    }
+    None
 }
 
 mod kw {
@@ -85,75 +157,22 @@ impl Parse for StructDef {
 impl Parse for FieldDef {
     fn parse(input: ParseStream) -> Result<Self> {
         let attrs = input.call(Attribute::parse_outer)?;
-
         let is_protected = attrs.iter().any(|attr| attr.path().is_ident("protected"));
         let is_readonly = attrs.iter().any(|attr| attr.path().is_ident("readonly"));
 
         let name: Ident = input.parse()?;
         input.parse::<Token![:]>()?;
-        let ty: Type = input.parse()?;
 
-        let kind = deduce_container_kind(&ty);
+        let raw_ty: Type = input.parse()?;
+        let ty = TypeKind::try_from(&raw_ty)?;
 
         Ok(FieldDef {
             name,
             ty,
-            kind,
             is_protected,
             is_readonly,
         })
     }
-}
-
-fn deduce_container_kind(ty: &Type) -> FieldKind {
-    if let syn::Type::Path(type_path) = ty
-        && let Some(segment) = type_path.path.segments.last()
-        && let syn::PathArguments::AngleBracketed(args) = &segment.arguments
-    {
-        match segment.ident.to_string().as_str() {
-            "Map" if args.args.len() == 2 => {
-                if let (syn::GenericArgument::Type(k), syn::GenericArgument::Type(v)) =
-                    (&args.args[0], &args.args[1])
-                {
-                    if let Some(real_value) = extract_unique_ptr_inner(v) {
-                        return FieldKind::Map {
-                            key: k.clone(),
-                            value: real_value,
-                            is_value_ptr: true,
-                        };
-                    } else {
-                        return FieldKind::Map {
-                            key: k.clone(),
-                            value: v.clone(),
-                            is_value_ptr: false,
-                        };
-                    }
-                }
-            }
-            "Vec" if args.args.len() == 1 => {
-                if let syn::GenericArgument::Type(inner) = &args.args[0] {
-                    if let Some(real_element) = extract_unique_ptr_inner(inner) {
-                        return FieldKind::Vec {
-                            element: real_element,
-                            is_ptr: true,
-                        };
-                    } else {
-                        return FieldKind::Vec {
-                            element: inner.clone(),
-                            is_ptr: false,
-                        };
-                    }
-                }
-            }
-            "Option" if args.args.len() == 1 => {
-                if let syn::GenericArgument::Type(inner) = &args.args[0] {
-                    return FieldKind::OptVal { ty: inner.clone() };
-                }
-            }
-            _ => {}
-        }
-    }
-    FieldKind::Val
 }
 
 impl Parse for ImplDef {
@@ -199,7 +218,8 @@ fn parse_args_and_kind(input: ParseStream) -> Result<(Vec<Arg>, MethodKind)> {
         |stream| {
             let name: Ident = stream.parse()?;
             stream.parse::<Token![:]>()?;
-            let ty: Type = stream.parse()?;
+            let raw_ty: Type = stream.parse()?;
+            let ty = TypeKind::try_from(&raw_ty)?;
             Ok(Arg { name, ty })
         },
         Token![,],
@@ -208,48 +228,39 @@ fn parse_args_and_kind(input: ParseStream) -> Result<(Vec<Arg>, MethodKind)> {
     Ok((args_list.into_iter().collect(), kind))
 }
 
-struct IterAttrConfig {
-    yield_ty: Ident,
-    is_owned: bool,
-    item_is_mut: bool,
-}
-
 impl Parse for MethodDef {
     fn parse(input: ParseStream) -> Result<Self> {
         let attrs = input.call(Attribute::parse_outer)?;
-        
-        let iter_config = parse_iter_attr(&attrs)?;
+
+        let iter_ty_kind = parse_iter_attr(&attrs)?;
         let is_protected = attrs.iter().any(|attr| attr.path().is_ident("protected"));
 
         input.parse::<Token![fn]>()?;
         let rust_name: Ident = input.parse()?;
-        
+
         let args_content;
         parenthesized!(args_content in input);
         let (args, kind) = parse_args_and_kind(&args_content)?;
 
-        if let Some(config) = iter_config {
-            return IterDef::parse_rest(input, rust_name, args, kind, config).map(MethodDef::Iter);
+        if let Some(yield_ty) = iter_ty_kind {
+            return IterDef::parse_rest(input, rust_name, args, kind, yield_ty)
+                .map(MethodDef::Iter);
         }
 
-        let ret_ty = if input.peek(Token![->]) {
+        let ret_ty_kind = if input.peek(Token![->]) {
             input.parse::<Token![->]>()?;
-            Some(input.parse::<Type>()?)
+            let ty: Type = input.parse()?;
+            Some(TypeKind::try_from(&ty)?)
         } else {
             None
         };
 
-        let is_return_self = if let Some(syn::Type::Path(p)) = &ret_ty {
-            p.path.is_ident("Self")
-        } else {
-            false
-        };
-
+        let is_return_self = matches!(&ret_ty_kind, Some(TypeKind::Object(s)) if s == "Self");
         if is_return_self {
             return CtorDef::parse_rest(input, rust_name, args, kind).map(MethodDef::Ctor);
         }
 
-        FnDef::parse_rest_with_ret(input, rust_name, args, kind, is_protected, ret_ty)
+        FnDef::parse_rest_with_ret(input, rust_name, args, kind, is_protected, ret_ty_kind)
             .map(MethodDef::Method)
     }
 }
@@ -260,7 +271,7 @@ impl IterDef {
         rust_name: Ident,
         args: Vec<Arg>,
         kind: MethodKind,
-        config: IterAttrConfig,
+        yield_ty: TypeKind,
     ) -> Result<Self> {
         if !args.is_empty() {
             return Err(input.error("Iterator methods cannot take arguments"));
@@ -272,7 +283,9 @@ impl IterDef {
             MethodKind::Static => return Err(input.error("Iterator must take &self or &mut self")),
         };
 
-        if config.item_is_mut && !is_iter_mut {
+        let is_item_mut = matches!(yield_ty, TypeKind::Reference { is_mut: true, .. });
+
+        if is_item_mut && !is_iter_mut {
             return Err(
                 input.error("Iterator producing mutable references (&mut T) must take &mut self")
             );
@@ -283,10 +296,8 @@ impl IterDef {
 
         Ok(IterDef {
             rust_name,
-            yield_ty: config.yield_ty,
-            is_owned: config.is_owned,
+            yield_ty,
             is_iter_mut,
-            is_item_mut: config.item_is_mut,
             cpp_name,
         })
     }
@@ -327,11 +338,11 @@ impl FnDef {
         args: Vec<Arg>,
         kind: MethodKind,
         is_protected: bool,
-        ret_ty: Option<Type>,
+        ret_ty: Option<TypeKind>,
     ) -> Result<Self> {
         let cpp_name = parse_cpp_mapping_str(input, &rust_name)?;
         input.parse::<Token![;]>()?;
-        
+
         Ok(FnDef {
             rust_name,
             cpp_name,
@@ -343,7 +354,7 @@ impl FnDef {
     }
 }
 
-fn parse_iter_attr(attrs: &[Attribute]) -> Result<Option<IterAttrConfig>> {
+fn parse_iter_attr(attrs: &[Attribute]) -> Result<Option<TypeKind>> {
     for attr in attrs {
         if !attr.path().is_ident("iter") {
             continue;
@@ -356,115 +367,13 @@ fn parse_iter_attr(attrs: &[Attribute]) -> Result<Option<IterAttrConfig>> {
             if let syn::Meta::NameValue(nv) = meta
                 && nv.path.is_ident("Item")
             {
-                return parse_iter_item_type(&nv.value);
+                let ty: syn::Type = syn::parse2(nv.value.to_token_stream())?;
+                return TypeKind::try_from(&ty).map(Some);
             }
         }
         return Err(syn::Error::new_spanned(attr, "Missing Item in #[iter]"));
     }
     Ok(None)
-}
-
-fn parse_iter_item_type(expr: &syn::Expr) -> Result<Option<IterAttrConfig>> {
-    match expr {
-        syn::Expr::Path(p) => {
-            if let Some(ident) = p.path.get_ident() {
-                return Ok(Some(IterAttrConfig {
-                    yield_ty: ident.clone(),
-                    is_owned: true,
-                    item_is_mut: false,
-                }));
-            }
-        }
-        syn::Expr::Reference(r) => {
-            if let syn::Expr::Path(p) = &*r.expr
-                && let Some(ident) = p.path.get_ident()
-            {
-                return Ok(Some(IterAttrConfig {
-                    yield_ty: ident.clone(),
-                    is_owned: false,
-                    item_is_mut: r.mutability.is_some(),
-                }));
-            }
-        }
-        _ => {}
-    }
-    Err(syn::Error::new_spanned(
-        expr,
-        "Invalid Item type. Expected T, &T or &mut T",
-    ))
-}
-
-pub fn preprocess(input: &BindInput) -> BindContext {
-    let mut includes = Vec::new();
-    let mut models: HashMap<String, ClassModel> = HashMap::new();
-    let mut class_names_order = Vec::new();
-
-    for item in &input.items {
-        match item {
-            BindItem::Include(path) => includes.push(path.clone()),
-            BindItem::Struct(def) => {
-                let name = def.name.clone();
-                let name_str = name.to_string();
-                let mut model = ClassModel::new(name);
-
-                if def.fields.iter().any(|f| f.is_protected) {
-                    model.needs_exposer = true;
-                }
-                model.fields = def.fields.clone();
-                models.insert(name_str.clone(), model);
-                class_names_order.push(name_str);
-            }
-            BindItem::Impl(def) => {
-                let target = def.target.to_string();
-                if let Some(model) = models.get_mut(&target) {
-                    if def.methods.iter().any(|m| match m {
-                        MethodDef::Method(f) => f.is_protected,
-                        _ => false,
-                    }) {
-                        model.needs_exposer = true;
-                    }
-                    model.methods.extend(def.methods.clone());
-                } else {
-                    panic!("Impl block found for undefined struct '{}'", target);
-                }
-            }
-        }
-    }
-
-    check_field_kinds(&mut models);
-    inject_default_ctors(&mut models);
-
-    let vec_defs = collect_vec_defs(&models);
-    let map_defs = collect_map_defs(&models);
-
-    BindContext {
-        includes,
-        models,
-        class_names_order,
-        vec_defs,
-        map_defs,
-    }
-}
-
-fn check_field_kinds(models: &mut HashMap<String, ClassModel>) {
-    let known_classes: std::collections::HashSet<String> = models.keys().cloned().collect();
-
-    for model in models.values_mut() {
-        for field in &mut model.fields {
-            if let FieldKind::Val = field.kind
-                && let Some(type_name) = get_type_ident_name(&field.ty)
-                && known_classes.contains(&type_name)
-            {
-                field.kind = FieldKind::Obj;
-            }
-            if let FieldKind::OptVal { ty } = &field.kind
-                && let Some(type_name) = get_type_ident_name(ty)
-                && known_classes.contains(&type_name)
-            {
-                field.kind = FieldKind::OptObj { ty: ty.clone() };
-            }
-        }
-    }
 }
 
 fn parse_cpp_mapping_str(input: ParseStream, default: &Ident) -> Result<String> {
@@ -477,61 +386,5 @@ fn parse_cpp_mapping_str(input: ParseStream, default: &Ident) -> Result<String> 
         }
     } else {
         Ok(default.to_string())
-    }
-}
-
-fn collect_vec_defs(models: &HashMap<String, ClassModel>) -> HashSet<VecDef> {
-    let mut vec_defs = HashSet::new();
-
-    for model in models.values() {
-        for field in &model.fields {
-            if let FieldKind::Vec { element, is_ptr } = &field.kind
-                && let Some(name) = get_type_ident_name(element)
-            {
-                vec_defs.insert(VecDef {
-                    elem_type: name,
-                    is_ptr: *is_ptr,
-                });
-            }
-        }
-    }
-    vec_defs
-}
-
-fn collect_map_defs(models: &HashMap<String, ClassModel>) -> HashSet<MapDef> {
-    let mut map_defs = HashSet::new();
-
-    for model in models.values() {
-        for field in &model.fields {
-            if let FieldKind::Map { key, value,is_value_ptr } = &field.kind
-                && let (Some(key_name), Some(value_name)) =
-                    (get_type_ident_name(key), get_type_ident_name(value))
-            {
-                map_defs.insert(MapDef {
-                    key_type: key_name,
-                    value_type: value_name,
-                    is_value_ptr: *is_value_ptr,
-                });
-            }
-        }
-    }
-    map_defs
-}
-
-
-fn inject_default_ctors(models: &mut HashMap<String, ClassModel>) {
-    for (_name, model) in models.iter_mut() {
-        let has_ctor = model.methods.iter().any(|m| matches!(m, MethodDef::Ctor(_)));
-        
-        if !has_ctor {
-            let default_ctor = MethodDef::Ctor(CtorDef {
-                rust_name: format_ident!("new"),
-                args: vec![],
-                cpp_name: format_ident!("new"),
-                is_user_defined: false,
-            });
-            
-            model.methods.push(default_ctor);
-        }
     }
 }

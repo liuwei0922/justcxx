@@ -30,13 +30,10 @@ fn generate_includes(includes: &Vec<syn::LitStr>, lines: &mut Vec<String>) {
 
 fn generate_class_shim(class: &ClassModel, lines: &mut Vec<String>) {
     let original_class_name = class.name.to_string();
-
-    let target_class_name = if class.needs_exposer {
+    if class.needs_exposer {
         generate_exposer_class(class, &original_class_name, lines);
-        format!("{}_Exposer", original_class_name)
-    } else {
-        original_class_name.clone()
-    };
+    }
+    let target_class_name = class.get_cxx_name().to_string();
 
     for field in &class.fields {
         generate_field_shim(&target_class_name, field, lines);
@@ -75,33 +72,46 @@ fn generate_exposer_class(class: &ClassModel, original_name: &str, lines: &mut V
 }
 
 fn generate_field_shim(class_name: &str, field: &FieldDef, lines: &mut Vec<String>) {
-    match &field.kind {
-        FieldKind::Val => {
+    match &field.ty {
+        TypeKind::Primitive(_) | TypeKind::String => {
             lines.push(format!("DEFINE_VAL({}, {})", class_name, field.name));
             if !field.is_readonly {
                 lines.push(format!("DEFINE_VAL_SET({}, {})", class_name, field.name));
             }
         }
-        FieldKind::Obj => {            
-            if field.is_readonly{
+
+        TypeKind::Object(_) | TypeKind::Vector { .. } | TypeKind::Map { .. } => {
+            if field.is_readonly {
                 lines.push(format!("DEFINE_OBJ_CONST({}, {})", class_name, field.name));
-            }else{
+            } else {
                 lines.push(format!("DEFINE_OBJ({}, {})", class_name, field.name));
                 lines.push(format!("DEFINE_OBJ_SET({}, {})", class_name, field.name));
             }
         }
-        FieldKind::OptObj { ty: _ } => {
-            lines.push(format!("DEFINE_OPT_OBJ({}, {})", class_name, field.name));
+
+        TypeKind::Option(inner) => {
+            match (inner.is_object_value(), field.is_readonly) {
+                (true, true) => lines.push(format!(
+                    "DEFINE_OPT_OBJ_CONST({}, {})",
+                    class_name, field.name
+                )),
+                (true, false) => {
+                    lines.push(format!("DEFINE_OPT_OBJ({}, {})", class_name, field.name))
+                }
+                (false, _) => lines.push(format!("DEFINE_OPT_VAL({}, {})", class_name, field.name)),
+            }
+            if !field.is_readonly {
+                lines.push(format!("DEFINE_OBJ_SET({}, {})", class_name, field.name));
+            }
         }
-        FieldKind::OptVal { ty: _ } => {
-            lines.push(format!("DEFINE_OPT_VAL({}, {})", class_name, field.name));
+
+        TypeKind::Reference { inner, .. } => {
+            if let TypeKind::Slice(_) = &**inner {
+                lines.push(format!("DEFINE_VAL({}, {})", class_name, field.name));
+            }
         }
-        FieldKind::Map { .. } => {
-            lines.push(format!("DEFINE_OBJ({}, {})", class_name, field.name));
-        }
-        FieldKind::Vec { .. } => {
-            lines.push(format!("DEFINE_OBJ({}, {})", class_name, field.name));
-        }
+
+        _ => {}
     }
 }
 
@@ -110,7 +120,9 @@ fn generate_method_shim(class_name: &str, method: &MethodDef, lines: &mut Vec<St
         MethodDef::Iter(iter) => {
             lines.push(format!(
                 "DEFINE_ITER({}, {}, {})",
-                class_name, iter.rust_name, iter.yield_ty
+                class_name,
+                iter.rust_name,
+                iter.yield_ty.get_flat_name()
             ));
         }
         MethodDef::Method(func) => {
@@ -166,72 +178,60 @@ fn generate_method_shim(class_name: &str, method: &MethodDef, lines: &mut Vec<St
     }
 }
 
-fn generate_vec_shims(vec_defs: &HashSet<VecDef>, lines: &mut Vec<String>) {
-    let mut sorted_defs: Vec<&VecDef> = vec_defs.iter().collect();
-    sorted_defs.sort_by(|a, b| a.elem_type.cmp(&b.elem_type).then(a.is_ptr.cmp(&b.is_ptr)));
+fn generate_vec_shims(vec_defs: &HashSet<TypeKind>, lines: &mut Vec<String>) {
+    let mut sorted_defs: Vec<&TypeKind> = vec_defs.iter().collect();
+    sorted_defs.sort_by(|a, b| a.get_flat_name().cmp(&b.get_flat_name()));
 
     for def in sorted_defs {
-        let elem_type = if &def.elem_type == "String" {
-            "std::string"
-        } else {
-            &def.elem_type
-        };
+        if let TypeKind::Vector { inner, is_ptr } = def {
+            let elem_name = inner.get_flat_name();
+            let alias = def.get_flat_name();
 
-        if def.is_ptr {
-            let alias = format!("Vec_Ptr_{}", &def.elem_type);
-            lines.push(format!(
-                "using {} = std::vector<std::unique_ptr<{}>>;",
-                alias, elem_type
-            ));
-            lines.push(format!("DEFINE_VEC_OPS({}, {})", alias, elem_type));           
-        } else {
-            let alias = format!("Vec_{}", &def.elem_type);
-            lines.push(format!("using {} = std::vector<{}>;", alias, elem_type));
-            lines.push(format!("DEFINE_VEC_OPS({}, {})", alias, elem_type));
+            if *is_ptr {
+                lines.push(format!(
+                    "using {} = std::vector<std::unique_ptr<{}>>;",
+                    alias, elem_name
+                ));
+            } else {
+                lines.push(format!("using {} = std::vector<{}>;", alias, elem_name));
+            }
+
+            lines.push(format!("DEFINE_VEC_OPS({}, {})", alias, elem_name));
+
+            lines.push("".to_string());
         }
-        lines.push("".to_string()); // 空行分隔
     }
 }
 
-fn generate_map_shims(map_defs: &HashSet<MapDef>, lines: &mut Vec<String>) {
-    let mut sorted_defs: Vec<&MapDef> = map_defs.iter().collect();
-    sorted_defs.sort_by(|a, b| {
-        a.key_type
-            .cmp(&b.key_type)
-            .then(a.value_type.cmp(&b.value_type))
-            .then(a.is_value_ptr.cmp(&b.is_value_ptr))
-    });
+fn generate_map_shims(map_defs: &HashSet<TypeKind>, lines: &mut Vec<String>) {
+    let mut sorted_defs: Vec<&TypeKind> = map_defs.iter().collect();
+    sorted_defs.sort_by(|a, b| a.get_flat_name().cmp(&b.get_flat_name()));
 
     for def in sorted_defs {
-        let key_type = if &def.key_type == "String" {
-            "std::string"
-        } else {
-            &def.key_type
-        };
-        let value_type = if &def.value_type == "String" {
-            "std::string"
-        } else {
-            &def.value_type
-        };
+        if let TypeKind::Map {
+            key,
+            value,
+            is_val_ptr,
+        } = def
+        {
+            let key_name = key.get_flat_name();
+            let val_name = value.get_flat_name();
+            let alias = def.get_flat_name();
 
-        if def.is_value_ptr {
-            let alias = format!("Map_Ptr_{}_{}", &def.key_type, &def.value_type);
-            lines.push(format!(
-                "using {} = std::unordered_map<{},std::unique_ptr<{}>>;",
-                alias, key_type, value_type
-            ));
+            if *is_val_ptr {
+                lines.push(format!(
+                    "using {} = std::unordered_map<{}, std::unique_ptr<{}>>;",
+                    alias, key_name, val_name
+                ));
+            } else {
+                lines.push(format!(
+                    "using {} = std::unordered_map<{}, {}>;",
+                    alias, key_name, val_name
+                ));
+            }
+
             lines.push(format!("DEFINE_MAP_OPS({})", alias));
-            lines.push(format!("DEFINE_MAP_ITER({})", alias));
-        } else {
-            let alias = format!("Map_{}_{}", &def.key_type, &def.value_type);
-            lines.push(format!(
-                "using {} = std::unordered_map<{},{}>;",
-                alias, key_type, value_type
-            ));
-            lines.push(format!("DEFINE_MAP_OPS({})", alias));
-            lines.push(format!("DEFINE_MAP_ITER({})", alias));
+            lines.push("".to_string());
         }
-
-        lines.push("".to_string()); // 空行分隔
     }
 }

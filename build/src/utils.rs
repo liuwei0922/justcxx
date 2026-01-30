@@ -1,63 +1,61 @@
-use syn::{Type, TypePath, TypeReference};
-use std::collections::HashMap;
-use crate::ast::ClassModel;
+use crate::ast::*;
+use syn::Result;
 
-pub fn extract_option_inner(ty: &Type) -> Option<Type> {
-    if let Type::Path(type_path) = ty
-        && type_path.path.segments.len() == 1
-        && type_path.path.segments[0].ident == "Option"
-        && let syn::PathArguments::AngleBracketed(args) = &type_path.path.segments[0].arguments
-        && args.args.len() == 1
-        && let syn::GenericArgument::Type(inner_ty) = &args.args[0]
-    {
-        return Some(inner_ty.clone());
+pub fn extract_unique_ptr_info(ty: &syn::Type) -> Result<(TypeKind, bool)> {
+    let kind = TypeKind::try_from(ty)?;
+    if let TypeKind::UniquePtr(inner) = kind {
+        Ok((*inner, true))
+    } else {
+        Ok((kind, false))
     }
-    None
 }
 
-pub fn extract_unique_ptr_inner(ty: &Type) -> Option<Type> {
-    if let syn::Type::Path(type_path) = ty
-        && let Some(segment) = type_path.path.segments.last()
-        && segment.ident == "UniquePtr"
-        && let syn::PathArguments::AngleBracketed(args) = &segment.arguments
-        && args.args.len() == 1
-        && let syn::GenericArgument::Type(inner) = &args.args[0]
-    {
-        return Some(inner.clone());
+pub fn get_single_arg(args: &syn::AngleBracketedGenericArguments) -> Result<&syn::Type> {
+    if args.args.len() != 1 {
+        return Err(syn::Error::new_spanned(
+            args,
+            "Expected exactly 1 generic argument",
+        ));
     }
-    None
+    if let syn::GenericArgument::Type(ty) = &args.args[0] {
+        Ok(ty)
+    } else {
+        Err(syn::Error::new_spanned(
+            &args.args[0],
+            "Expected type argument",
+        ))
+    }
 }
 
-#[derive(Debug, Clone)]
-pub struct DefinedRefInfo {
-    pub elem: Type,
-    pub is_mut: bool,
-    pub type_name: String,
+pub fn get_double_args(
+    args: &syn::AngleBracketedGenericArguments,
+) -> Result<(&syn::Type, &syn::Type)> {
+    if args.args.len() != 2 {
+        return Err(syn::Error::new_spanned(
+            args,
+            "Expected exactly 2 generic arguments",
+        ));
+    }
+    match (&args.args[0], &args.args[1]) {
+        (syn::GenericArgument::Type(k), syn::GenericArgument::Type(v)) => Ok((k, v)),
+        _ => Err(syn::Error::new_spanned(args, "Expected type arguments")),
+    }
 }
 
-pub fn extract_defined_ref_info(
-    ty: &Type,
-    models: &HashMap<String, ClassModel>,
-) -> Option<DefinedRefInfo> {
-    if let Type::Reference(TypeReference {
-        mutability, elem, ..
-    }) = ty
-        && let Some(name) = get_type_ident_name(&*elem)
-        && models.contains_key(&name)
-    {
-        return Some(DefinedRefInfo {
-            elem: *(*elem).clone(),
-            is_mut: mutability.is_some(),
-            type_name: name,
-        });
-    }
-    None
-}
-
-pub fn get_type_ident_name(ty: &Type) -> Option<String> {
-    match ty {
-        Type::Path(TypePath { path, .. }) => path.segments.last().map(|s| s.ident.to_string()),
-        Type::Reference(TypeReference { elem, .. }) => get_type_ident_name(elem),
-        _ => None,
-    }
+pub fn is_primitive(s: &str) -> bool {
+    matches!(
+        s,
+        "i8" | "u8"
+            | "i16"
+            | "u16"
+            | "i32"
+            | "u32"
+            | "i64"
+            | "u64"
+            | "f32"
+            | "f64"
+            | "bool"
+            | "usize"
+            | "isize"
+    )
 }
