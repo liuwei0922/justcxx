@@ -1,5 +1,4 @@
 pub(crate) const CONTENT: &str = r#"
-#pragma once
 #include "rust/cxx.h"
 #include <memory>
 #include <stdexcept>
@@ -277,6 +276,7 @@ using i64 = int64_t;
 using u64 = uint64_t;
 using f32 = float;
 using f64 = double;
+using String = std::string;
 
 #define DEFINE_VAL(CLASS, FIELD)                                               \
     inline auto CLASS##_get_##FIELD(const CLASS &obj)                          \
@@ -505,6 +505,6 @@ using f64 = double;
 #define DEFINE_MAP_OPS(MAP_TYPE) \
     DEFINE_MAP_LEN(MAP_TYPE) \
     DEFINE_MAP_GET(MAP_TYPE) \
-
-
+    DEFINE_MAP_ITER(MAP_TYPE)\
+    DEFINE_VEC_CTOR(MAP_TYPE)\
 "#;

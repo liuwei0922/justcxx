@@ -100,7 +100,7 @@ Instead, JustCxx automatically generates accessor methods.
 
 #+begin_src rust
 struct Manager {
-    basic: i32,              // Basic type    
+    id: i32,                 // Basic type    
     #[readonly] 
     name: String,            // string type, no set     
     obj: Config,             // C++ Object
@@ -142,7 +142,7 @@ Optimized for performance.
 - =iter() -> String=
 
 ** Map<K, V>
-Supports =std::map= or =std::unordered_map=.
+Supports =std::unordered_map=.
 - =get(key) -> Option<V>=
 - =iter()= (Returns Key/Value pairs)
 
