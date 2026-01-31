@@ -25,12 +25,6 @@ bind! {
         config: Config,
     }
 
-    struct ConfigContainer{
-        data: Vec<Config>,
-        ids: Vec<i32>,
-        names: Vec<String>,
-    }
-
     struct Chance{
         probability: Option<i32>,
     }
@@ -44,6 +38,12 @@ bind! {
         int_str_map: Map<i32, String>,
         int_config_map: Map<i32, Config>,
         str_config_map: Map<String, Config>
+    }
+
+    struct ConfigContainer{
+        data: Vec<Config>,
+        ids: Vec<i32>,
+        names: Vec<String>,
     }
 
     impl Methods{

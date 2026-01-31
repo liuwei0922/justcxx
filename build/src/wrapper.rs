@@ -3,6 +3,14 @@ use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote};
 use std::collections::HashSet;
 
+struct MethodGroups {
+    universal_common: Vec<TokenStream>,
+    universal_mut: Vec<TokenStream>,
+    ref_const: Vec<TokenStream>,
+    ref_mut: Vec<TokenStream>,
+    aux: Option<TokenStream>,
+}
+
 pub fn generate_wrapper_block(class: &ClassModel) -> TokenStream {
     let class_name = &class.name;
     let _owned_name = format_ident!("{}Owned", class_name);
@@ -24,16 +32,24 @@ pub fn generate_wrapper_block(class: &ClassModel) -> TokenStream {
     };
 
     let mut common_methods = Vec::new();
-    let mut const_methods = Vec::new();
     let mut mut_methods = Vec::new();
+    let mut ref_const_methods = Vec::new();
+    let mut ref_mut_methods = Vec::new();
     let mut static_methods = Vec::new();
     let mut aux_items = Vec::new();
 
     for field in &class.fields {
-        let (commons, consts, muts, aux) = generate_wrapper_field(class, field);
-        common_methods.extend(commons);
-        const_methods.extend(consts);
-        mut_methods.extend(muts);
+        let MethodGroups {
+            universal_common,
+            universal_mut,
+            ref_const,
+            ref_mut,
+            aux,
+        } = generate_wrapper_field(class, field);
+        common_methods.extend(universal_common);
+        ref_const_methods.extend(ref_const);
+        mut_methods.extend(universal_mut);
+        ref_mut_methods.extend(ref_mut);
         if let Some(a) = aux {
             aux_items.push(a);
         }
@@ -65,22 +81,36 @@ pub fn generate_wrapper_block(class: &ClassModel) -> TokenStream {
         }
     };
 
-    let const_impl = if !const_methods.is_empty() {
+    let ref_const_impl = if !ref_const_methods.is_empty() {
         quote! {
-            impl<'a, S: justcxx::Storage<#class_name>>
-                CppObject<'a, #class_name, justcxx::Const, S>
+            impl<'a> CppObject<'a, #class_name, justcxx::Const, justcxx::Ref>
             {
-                #(#const_methods)*
+                #(#ref_const_methods)*
             }
         }
     } else {
         quote! {}
     };
 
-    let mut_impl = quote! {
-        impl<'a, S: justcxx::Storage<#class_name>> CppObject<'a, #class_name, justcxx::Mut, S> {
-            #(#mut_methods)*
+    let mut_impl = if !mut_methods.is_empty() {
+        quote! {
+            impl<'a, S: justcxx::Storage<#class_name>> CppObject<'a, #class_name, justcxx::Mut, S>{
+                #(#mut_methods)*
+            }
         }
+    } else {
+        quote! {}
+    };
+
+    let ref_mut_impl = if !ref_mut_methods.is_empty() {
+        quote! {
+            impl<'a> CppObject<'a, #class_name, justcxx::Mut, justcxx::Ref>
+            {
+                #(#ref_mut_methods)*
+            }
+        }
+    } else {
+        quote! {}
     };
 
     quote! {
@@ -88,7 +118,8 @@ pub fn generate_wrapper_block(class: &ClassModel) -> TokenStream {
         #type_aliases
         #static_impl
         #generic_impl
-        #const_impl
+        #ref_const_impl
+        #ref_mut_impl
         #mut_impl
         #(#aux_items)*
     }
@@ -163,13 +194,13 @@ fn generate_vec_primitive(
     let common_methods = quote! {
         pub fn len(&self) -> usize {
             unsafe {
-                let ptr = S::as_ptr(&self.inner);
+                let ptr = self.as_ptr();
                 ffi::#len_fn(&*ptr)
             }
         }
         pub fn get(&self, index: usize) -> Option<#elem_ident> {
             unsafe{
-                let ptr = S::as_ptr(&self.inner);
+                let ptr = self.as_ptr();
                 match ffi::#get_fn(&*ptr, index) {
                     Ok(n) => Some(n),
                     Err(_) => None,
@@ -178,7 +209,7 @@ fn generate_vec_primitive(
         }
         pub fn as_slice(&self) -> &[#elem_ident] {
             unsafe {
-                let ptr = S::as_ptr(&self.inner);
+                let ptr = self.as_ptr();
                 ffi::#slice_fn(&*ptr)
             }
         }
@@ -191,7 +222,7 @@ fn generate_vec_primitive(
     let mut_methods = quote! {
         pub fn get_mut(&mut self, index: usize) -> Option<&mut #elem_ident> {
             unsafe{
-                let ptr = S::as_ptr(&self.inner);
+                let ptr = self.as_ptr();
                 let pin_self = std::pin::Pin::new_unchecked(&mut *ptr);
                 match ffi::#get_mut_fn(pin_self, index) {
                     Ok(ret) => Some(
@@ -204,7 +235,7 @@ fn generate_vec_primitive(
 
         pub fn push(&mut self, val: #elem_ident) {
             unsafe {
-                let ptr = S::as_ptr(&self.inner);
+                let ptr = self.as_ptr();
                 let pin_self = std::pin::Pin::new_unchecked(&mut *ptr);
                 ffi::#push_fn(pin_self, val);
             }
@@ -212,7 +243,7 @@ fn generate_vec_primitive(
 
         pub fn as_mut_slice(&self) -> &mut [#elem_ident] {
             unsafe {
-                let ptr = S::as_ptr(&self.inner);
+                let ptr = self.as_ptr();
                 let pin_self = std::pin::Pin::new_unchecked(&mut *ptr);
                 ffi::#mut_slice_fn(pin_self)
             }
@@ -241,14 +272,14 @@ fn generate_vec_string(type_prefix: &str, rust_tag: &TokenStream, items: &mut Ve
     let common_methods = quote! {
         pub fn len(&self) -> usize {
             unsafe {
-                let ptr = S::as_ptr(&self.inner);
+                let ptr = self.as_ptr();
 
                 ffi::#len_fn(&*ptr)
             }
         }
         pub unsafe fn get(&self, index: usize) -> Option<String> {
             unsafe{
-                let ptr = S::as_ptr(&self.inner);
+                let ptr = self.as_ptr();
                 match ffi::#get_fn(&*ptr, index) {
                     Ok(s) => Some(s),
                     Err(_) => None,
@@ -265,7 +296,7 @@ fn generate_vec_string(type_prefix: &str, rust_tag: &TokenStream, items: &mut Ve
     let mut_methods = quote! {
         pub fn push(&mut self, val: &str) {
             unsafe {
-                let ptr = S::as_ptr(&self.inner);
+                let ptr = self.as_ptr();
                 let pin_self = std::pin::Pin::new_unchecked(&mut *ptr);
                 ffi::#push_fn(pin_self, val);
             }
@@ -276,7 +307,7 @@ fn generate_vec_string(type_prefix: &str, rust_tag: &TokenStream, items: &mut Ve
                 panic!("index out of bounds: the len is {} but the index is {}", self.len(), index);
             }
             unsafe {
-                let ptr = S::as_ptr(&self.inner);
+                let ptr = self.as_ptr();
                 let pin_self = std::pin::Pin::new_unchecked(&mut *ptr);
                 ffi::#set_fn(pin_self,index, val);
             }
@@ -311,14 +342,14 @@ fn generate_vec_obj(
     let common_methods = quote! {
         pub fn len(&self) -> usize {
             unsafe {
-                let ptr = S::as_ptr(&self.inner);
+                let ptr = self.as_ptr();
 
                 ffi::#len_fn(&*ptr)
             }
         }
-        pub fn get(&self, index: usize) -> Option<justcxx::CppRef<'a, #elem_ident>> {
+        pub fn get(&self, index: usize) -> Option<justcxx::CppRef<'_, #elem_ident>> {
             unsafe{
-                let ptr = S::as_ptr(&self.inner);
+                let ptr = self.as_ptr();
                 match ffi::#get_fn(&*ptr, index) {
                     Ok(ret_ref) => {
                         let ret_ptr = (ret_ref as *const _) as *mut _;
@@ -333,16 +364,15 @@ fn generate_vec_obj(
 
         }
 
-        pub fn iter(&self) -> impl Iterator<Item = justcxx::CppRef<'a,#elem_ident>> + 'a where M: 'a {
-             let this = self.as_ref();
-            (0..self.len()).map(move |i| this.get(i).unwrap().as_ref())
+        pub fn iter(&self) -> impl Iterator<Item = justcxx::CppRef<'_,#elem_ident>> + '_ {
+            (0..self.len()).map(move |i| self.get(i).unwrap())
         }
     };
 
     let mut_methods = quote! {
-        pub fn get_mut(&mut self, index: usize) -> Option<justcxx::CppMut<'a, #elem_ident>>{
+        pub fn get_mut(&mut self, index: usize) -> Option<justcxx::CppMut<'_, #elem_ident>>{
             unsafe{
-                let ptr = S::as_ptr(&self.inner);
+                let ptr = self.as_ptr();
                 let pin_self = std::pin::Pin::new_unchecked(&mut *ptr);
                 match ffi::#get_mut_fn(pin_self, index) {
                     Ok(ret_ref) => {
@@ -359,16 +389,34 @@ fn generate_vec_obj(
 
         pub fn push(&mut self, val: justcxx::CppOwned<#elem_ident>){
             unsafe{
-                let ptr = S::as_ptr(&self.inner);
+                let ptr = self.as_ptr();
                 let pin_self = std::pin::Pin::new_unchecked(&mut *ptr);
                 ffi::#push_fn(pin_self, val.inner);
             }
         }
 
-        pub fn iter_mut(&mut self) -> impl Iterator<Item = justcxx::CppMut<'a, #elem_ident>> + 'a {
-             let mut this = self.as_mut();
-            (0..self.len()).map(move |i| this.get_mut(i).unwrap())
+        pub fn iter_mut(&mut self) -> impl Iterator<Item = justcxx::CppMut<'_, #elem_ident>> + '_{
+            unsafe{
+                let ptr = self.as_ptr();
+                (0..self.len()).map(
+                    move |index|{
+                        let pin_self = std::pin::Pin::new_unchecked(&mut *ptr);
+                        match ffi::#get_mut_fn(pin_self, index) {
+                            Ok(ret_ref) => {
+                                let ret_ptr = ret_ref.get_unchecked_mut() as *mut _;
+                                CppObject {
+                                    inner: ret_ptr,
+                                    _marker: std::marker::PhantomData
+                                }
+                            },
+                            Err(_) => panic!("Index out of bounds in iter_mut!"),
+                        }
+                    }
+                )
+
+            }
         }
+
     };
 
     items.push(quote! {
@@ -482,7 +530,7 @@ fn generate_map_functions(
     //     quote! {
     //         pub fn get_mut(&mut self, key: #key_arg_ty) -> Option<#ret_ty> {
     //             unsafe {
-    //                 let ptr = S::as_ptr(&self.inner);
+    //                 let ptr = self.as_ptr();
     //                 let pin_self = std::pin::Pin::new_unchecked(&mut *ptr);
     //                 match ffi::#get_fn(pin_self, #key_pass_code) {
     //                     Ok(ret) => {
@@ -501,14 +549,14 @@ fn generate_map_functions(
     let common_methods = quote! {
         pub fn len(&self) -> usize {
             unsafe {
-                let ptr = S::as_ptr(&self.inner);
+                let ptr = self.as_ptr();
                 ffi::#len_fn(&*ptr)
             }
         }
 
         pub fn get(&self, key: #key_arg_ty) -> Option<#common_ret_ty> {
             unsafe {
-                let ptr = S::as_ptr(&self.inner);
+                let ptr = self.as_ptr();
                 let mut_ptr = ptr as *mut _;
                 let pin_self = std::pin::Pin::new_unchecked(&mut *mut_ptr);
 
@@ -524,7 +572,7 @@ fn generate_map_functions(
 
         pub fn iter(&self) -> #iter_struct_name<'a, justcxx::Const> {
             unsafe {
-                let ptr = S::as_ptr(&self.inner);
+                let ptr = self.as_ptr();
                 let mut_ptr = ptr as *mut _;
                 let pin_self = std::pin::Pin::new_unchecked(&mut *mut_ptr);
 
@@ -610,15 +658,7 @@ fn generate_map_iter_struct(
     });
 }
 
-fn gen_val_field(
-    class_name: &Ident,
-    field: &FieldDef,
-) -> (
-    Vec<TokenStream>,
-    Vec<TokenStream>,
-    Vec<TokenStream>,
-    Option<TokenStream>,
-) {
+fn gen_val_field(class_name: &Ident, field: &FieldDef) -> MethodGroups {
     let ty = &field.ty;
     let is_readonly = field.is_readonly;
     let field_name = &field.name;
@@ -628,7 +668,7 @@ fn gen_val_field(
 
     let common = vec![quote! {
         pub fn #field_name(&self) -> #ret_ty {
-            unsafe { let ptr = S::as_ptr(&self.inner); #get_call }
+            unsafe { let ptr = self.as_ptr(); #get_call }
         }
     }];
 
@@ -641,7 +681,7 @@ fn gen_val_field(
         muts.push(quote! {
             pub fn #set_name(&mut self, val: #arg_ty) {
                 unsafe {
-                    let ptr = S::as_ptr(&self.inner);
+                    let ptr = self.as_ptr();
                     let pin = std::pin::Pin::new_unchecked(&mut *ptr);
                     ffi::#ffi_set(pin, val);
                 }
@@ -649,18 +689,16 @@ fn gen_val_field(
         });
     }
 
-    (common, vec![], muts, None)
+    MethodGroups {
+        universal_common: common,
+        universal_mut: muts,
+        ref_const: vec![],
+        ref_mut: vec![],
+        aux: None,
+    }
 }
 
-fn gen_obj_field(
-    class_name: &Ident,
-    field: &FieldDef,
-) -> (
-    Vec<TokenStream>,
-    Vec<TokenStream>,
-    Vec<TokenStream>,
-    Option<TokenStream>,
-) {
+fn gen_obj_field(class_name: &Ident, field: &FieldDef) -> MethodGroups {
     let ty = &field.ty;
     let is_readonly = field.is_readonly;
     let field_name = &field.name;
@@ -683,10 +721,17 @@ fn gen_obj_field(
             let body = ref_const.gen_ret_conversion(quote! { ffi::#get_name(&*ptr) });
             let common = vec![quote! {
                 pub fn #field_name(&self) -> #ret_ty_const {
-                    unsafe { let ptr = S::as_ptr(&self.inner); #body }
+                    unsafe { let ptr = self.as_ptr(); #body }
                 }
             }];
-            (common, vec![], vec![], None)
+
+            MethodGroups {
+                universal_common: vec![],
+                universal_mut: vec![],
+                ref_const: common,
+                ref_mut: vec![],
+                aux: None,
+            }
         }
 
         false => {
@@ -696,7 +741,7 @@ fn gen_obj_field(
             let consts = vec![quote! {
                 pub fn #field_name(&self) -> #ret_ty_const {
                     unsafe {
-                        let ptr = S::as_ptr(&self.inner);
+                        let ptr = self.as_ptr();
                         #body_mut
                     }
                 }
@@ -708,7 +753,7 @@ fn gen_obj_field(
             let mut muts = vec![quote! {
                 pub fn #field_name(&mut self) -> #ret_ty_mut {
                     unsafe {
-                        let ptr = S::as_ptr(&self.inner);
+                        let ptr = self.as_ptr();
                         #body_mut
                     }
                 }
@@ -722,28 +767,25 @@ fn gen_obj_field(
             muts.push(quote! {
                 pub fn #set_name(&mut self, val: #arg_ty) {
                     unsafe {
-                        let ptr = S::as_ptr(&self.inner);
+                        let ptr = self.as_ptr();
                         let pin = std::pin::Pin::new_unchecked(&mut *ptr);
                         ffi::#ffi_set(pin, #arg_conv);
                     }
                 }
             });
 
-            (vec![], consts, muts, None)
+            MethodGroups {
+                universal_common: vec![],
+                universal_mut: vec![],
+                ref_const: consts,
+                ref_mut: muts,
+                aux: None,
+            }
         }
     }
 }
 
-fn gen_opt_field(
-    class_name: &Ident,
-    field: &FieldDef,
-    inner: &TypeKind,
-) -> (
-    Vec<TokenStream>,
-    Vec<TokenStream>,
-    Vec<TokenStream>,
-    Option<TokenStream>,
-) {
+fn gen_opt_field(class_name: &Ident, field: &FieldDef, inner: &TypeKind) -> MethodGroups {
     let is_readonly = field.is_readonly;
     let field_name = &field.name;
     let get_name = field.get_ffi_get_name(class_name);
@@ -760,10 +802,17 @@ fn gen_opt_field(
 
             let common = vec![quote! {
                 pub fn #field_name(&self) -> #ret_ty {
-                    unsafe { let ptr = S::as_ptr(&self.inner); #body }
+                    unsafe { let ptr = self.as_ptr(); #body }
                 }
             }];
-            (common, vec![], vec![], None)
+
+            MethodGroups {
+                universal_common: vec![],
+                universal_mut: vec![],
+                ref_const: common,
+                ref_mut: vec![],
+                aux: None,
+            }
         }
 
         (true, false) => {
@@ -784,13 +833,13 @@ fn gen_opt_field(
             );
             let consts = vec![quote! {
                 pub fn #field_name(&self) -> #ret_ty_const {
-                    unsafe { let ptr = S::as_ptr(&self.inner); #body_mut }
+                    unsafe { let ptr = self.as_ptr(); #body_mut }
                 }
             }];
 
             let mut muts = vec![quote! {
                 pub fn #field_name(&mut self) -> #ret_ty_mut {
-                    unsafe { let ptr = S::as_ptr(&self.inner); #body_mut }
+                    unsafe { let ptr = self.as_ptr(); #body_mut }
                 }
             }];
 
@@ -802,14 +851,20 @@ fn gen_opt_field(
             muts.push(quote! {
                 pub fn #set_name(&mut self, val: #arg_ty) {
                     unsafe {
-                        let ptr = S::as_ptr(&self.inner);
+                        let ptr = self.as_ptr();
                         let pin = std::pin::Pin::new_unchecked(&mut *ptr);
                         ffi::#ffi_set(pin, #arg_conv);
                     }
                 }
             });
 
-            (vec![], consts, muts, None)
+            MethodGroups {
+                universal_common: vec![],
+                universal_mut: vec![],
+                ref_const: consts,
+                ref_mut: muts,
+                aux: None,
+            }
         }
 
         (false, _) => {
@@ -820,7 +875,7 @@ fn gen_opt_field(
                 .gen_ret_conversion(quote! { ffi::#get_name(&*ptr) });
             let common = vec![quote! {
                 pub fn #field_name(&self) -> #ret_ty {
-                    unsafe { let ptr = S::as_ptr(&self.inner); #body }
+                    unsafe { let ptr = self.as_ptr(); #body }
                 }
             }];
 
@@ -833,7 +888,7 @@ fn gen_opt_field(
                 vec![quote! {
                     pub fn #set_name(&mut self, val: #arg_ty) {
                         unsafe {
-                            let ptr = S::as_ptr(&self.inner);
+                            let ptr = self.as_ptr();
                             let pin = std::pin::Pin::new_unchecked(&mut *ptr);
                             ffi::#ffi_set(pin, #arg_conv);
                         }
@@ -843,20 +898,18 @@ fn gen_opt_field(
                 vec![]
             };
 
-            (common, vec![], muts, None)
+            MethodGroups {
+                universal_common: common,
+                universal_mut: muts,
+                ref_const: vec![],
+                ref_mut: vec![],
+                aux: None,
+            }
         }
     }
 }
 
-fn generate_wrapper_field(
-    class: &ClassModel,
-    field: &FieldDef,
-) -> (
-    Vec<TokenStream>,
-    Vec<TokenStream>,
-    Vec<TokenStream>,
-    Option<TokenStream>,
-) {
+fn generate_wrapper_field(class: &ClassModel, field: &FieldDef) -> MethodGroups {
     let class_name = &class.name;
 
     match &field.ty {
@@ -868,7 +921,13 @@ fn generate_wrapper_field(
 
         TypeKind::Option(inner) => gen_opt_field(class_name, field, inner),
 
-        _ => (vec![], vec![], vec![], None),
+        _ => MethodGroups {
+            universal_common: vec![],
+            universal_mut: vec![],
+            ref_const: vec![],
+            ref_mut: vec![],
+            aux: None,
+        },
     }
 }
 
@@ -1021,7 +1080,7 @@ fn generate_iter_wrapper_method(
     quote! {
         pub fn #method_name(#receiver) -> impl Iterator<Item = #yield_ty_tokens> + 'a where M: 'a {
             unsafe {
-                let ptr = S::as_ptr(&self.inner);
+                let ptr = self.as_ptr();
                 let pin_self = std::pin::Pin::new_unchecked(&mut *ptr);
                 let ctx = ffi::#new_fn(pin_self);
                 #struct_name::<'a, M> {
@@ -1055,7 +1114,7 @@ fn generate_normal_method(
         .unzip();
 
     let prepare_ptr = quote! {
-        let ptr = S::as_ptr(&self.inner);
+        let ptr = self.as_ptr();
     };
 
     let ret_decl = if let Some(ret) = &func.ret_ty {

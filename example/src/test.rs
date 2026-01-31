@@ -1,6 +1,20 @@
 #[cfg(test)]
 mod tests {
     use crate::*;
+    #[test]
+    fn test_ref_lifetime() {
+        // this will not pass commpile.
+        // let dangling_ref;
+        // {
+        //     let manager = Manager::new();
+        //     //let ref_obj = manager.as_ref().config();
+        //     let ref_obj = manager.as_mut().config();
+        //     dangling_ref = ref_obj;
+        // }
+
+        // println!("Look at me: {:?}", dangling_ref.id());
+        // assert_eq!(dangling_ref.id(), 42);
+    }
 
     #[test]
     fn test_cpp_val_get() {
@@ -35,8 +49,8 @@ mod tests {
 
     #[test]
     fn test_cpp_obj_set1() {
-        let mut manager = Manager::new();
-        let mut config = manager.config();
+        let manager = Manager::new();
+        let mut config = manager.as_mut().config();
         config.set_id(100);
         config.set_value(200.0);
         config.set_name("new_test");
@@ -46,19 +60,19 @@ mod tests {
     }
     #[test]
     fn test_cpp_obj_set2() {
-        let mut manager = Manager::new();
-        manager.config().set_id(150);
-        manager.config().set_value(250.0);
-        manager.config().set_name("another_test");
-        assert_eq!(manager.config().id(), 150);
-        assert_eq!(manager.config().value(), 250.0);
-        assert_eq!(manager.config().name(), "another_test");
+        let manager = Manager::new();
+        manager.as_mut().config().set_id(150);
+        manager.as_mut().config().set_value(250.0);
+        manager.as_mut().config().set_name("another_test");
+        assert_eq!(manager.as_ref().config().id(), 150);
+        assert_eq!(manager.as_ref().config().value(), 250.0);
+        assert_eq!(manager.as_ref().config().name(), "another_test");
     }
     #[test]
     fn test_cpp_obj_set3() {
-        let mut school = School::new();
-        let mut teacher_manager = school.teacher();
-        let mut student_manager = school.student();
+        let school = School::new();
+        let mut teacher_manager = school.as_mut().teacher();
+        let mut student_manager = school.as_mut().student();
 
         let mut teacher_config = teacher_manager.config();
         let mut student_config = student_manager.config();
@@ -183,17 +197,17 @@ mod tests {
 
     #[test]
     fn test_vec_obj_iter() {
-        let mut container = ConfigContainer::new();
+        let container = ConfigContainer::new();
         let mut total_id = 0;
         for config in container.as_ref().data().iter() {
             total_id += config.id();
         }
         assert_eq!(total_id, 300);
 
-        for mut config in container.data().iter_mut() {
+        for mut config in container.as_mut().data().iter_mut() {
             config.set_id(10);
         }
-        for config in container.data().iter() {
+        for config in container.as_ref().data().iter() {
             assert_eq!(config.id(), 10);
         }
     }
@@ -210,8 +224,8 @@ mod tests {
 
     #[test]
     fn test_vec_number() {
-        let mut container = ConfigContainer::new();
-        let mut vec = container.ids();
+        let container = ConfigContainer::new();
+        let mut vec = container.as_mut().ids();
         assert_eq!(vec.len(), 0);
         vec.push(10);
         vec.push(20);
@@ -236,13 +250,13 @@ mod tests {
     #[test]
     fn test_option_obj() {
         let mut wallet = Wallet::new();
-        assert_eq!(wallet.config().is_none(), true);
+        assert_eq!(wallet.as_ref().config().is_none(), true);
 
         let mut config = Config::new();
         config.set_id(555);
         wallet.set_config(true, config.as_ref());
-        assert_eq!(wallet.config().is_some(), true);
-        assert_eq!(wallet.config().unwrap().id(), 555);
+        assert_eq!(wallet.as_ref().config().is_some(), true);
+        assert_eq!(wallet.as_ref().config().unwrap().id(), 555);
     }
 
     #[test]

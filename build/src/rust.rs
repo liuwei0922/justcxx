@@ -48,7 +48,7 @@ pub fn generate_rust(bind_context: &BindContext) -> TokenStream {
                 unsafe { S::as_ptr(&self.inner) }
             }
 
-            pub fn as_ref(&self) -> CppObject<'a, T, justcxx::Const, justcxx::Ref> {
+            pub fn as_ref(&self) -> CppObject<'_, T, justcxx::Const, justcxx::Ref> {
                 unsafe {
                     CppObject {
                         inner: self.as_ptr(),
@@ -62,7 +62,7 @@ pub fn generate_rust(bind_context: &BindContext) -> TokenStream {
         where
             T: justcxx::CppClass + justcxx::CppTypeAliases,
         {
-            pub fn as_mut(&self) -> CppObject<'a, T, justcxx::Mut, justcxx::Ref> {
+            pub fn as_mut(&self) -> CppObject<'_, T, justcxx::Mut, justcxx::Ref> {
                 unsafe {
                     CppObject {
                         inner: self.as_ptr(),
